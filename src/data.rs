@@ -22,22 +22,22 @@ impl Vocab {
     }
 
     /// Encode a character
-    fn encode_char(&self, c: char) -> usize {
-        self.chars.iter().position(|&x| x == c).unwrap()
+    fn encode_char(&self, c: char) -> i64 {
+        self.chars.iter().position(|&x| x == c).unwrap() as i64
     }
 
     /// Decode a character
-    fn decode_char(&self, i: usize) -> char {
-        self.chars[i]
+    fn decode_char(&self, i: i64) -> char {
+        self.chars[i as usize]
     }
 
     /// Encode a string
-    pub fn encode(&self, s: &str) -> Vec<usize> {
+    pub fn encode(&self, s: &str) -> Vec<i64> {
         s.chars().map(|c| self.encode_char(c)).collect()
     }
 
     /// Decode a string
-    pub fn decode(&self, v: &[usize]) -> String {
+    pub fn decode(&self, v: &[i64]) -> String {
         v.iter().map(|&i| self.decode_char(i)).collect()
     }
 
@@ -54,7 +54,7 @@ impl Vocab {
 
 /// Tokenized data
 pub struct TokenizedData {
-    data: Vec<usize>,
+    data: Vec<i64>,
     vocab: Vocab,
 }
 
@@ -81,15 +81,17 @@ impl TokenizedData {
     }
 
     /// Return a slice of the data
-    pub fn slice(&self, start: usize, end: usize) -> &[usize] {
+    pub fn slice(&self, start: usize, end: usize) -> &[i64] {
         &self.data[start..end]
     }
 }
 
+type Batch = (Vec<Vec<i64>>, Vec<Vec<i64>>);
+
 /// Dataloader for tokenized data
 /// Samples are tuples of the form (sample, target).
 /// The sample is a tensor of size `batch_size x data_len`.
-/// The target is a tensor of size `1 x data_len`.
+/// The target is a tensor of size `batch_size x data_len`.
 ///
 /// Targets are the next token in the sequence.
 ///
@@ -97,8 +99,8 @@ impl TokenizedData {
 ///
 /// For example, if data is [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12], `data_len` is 3 and `batch_size` is 2,
 /// the data loader could return the following batches:
-/// - batch 1: (tensor([[0, 1, 2], [3, 4, 5]]), tensor([[3], [6]]))
-/// - batch 2: (tensor([[6, 7, 8], [9, 10, 11]]), tensor([[9], [12]]))
+/// - batch 1: (tensor([[0, 1, 2], [3, 4, 5]]), tensor([[1, 2, 3], [4, 5, 6]]))
+/// - batch 2: (tensor([[6, 7, 8], [9, 10, 11]]), tensor([[7, 8, 9], [10, 11, 12]]))
 ///
 pub struct Loader {
     data: TokenizedData,
@@ -178,7 +180,7 @@ impl Loader {
     /// Returns the next batch
     /// If `shuffle` has been called, the order of the batches is random.
     /// Otherwise, the batches are returned in the order of the data.
-    pub fn next_batch(&mut self) -> Option<(Vec<Vec<usize>>, Vec<usize>)> {
+    pub fn next_batch(&mut self) -> Option<Batch> {
         let mut samples = Vec::with_capacity(self.batch_size);
         let mut targets = Vec::with_capacity(self.batch_size);
 
@@ -190,18 +192,18 @@ impl Loader {
         if let Some(order) = &self.order {
             for i in 0..self.batch_size {
                 let pos = order[self.pos + i];
-                let sample = self.data.slice(pos, pos + self.seq_len);
-                let target = self.data.slice(pos + self.seq_len, pos + self.seq_len + 1);
+                let sample = self.data.slice(pos , pos + self.seq_len);
+                let target = self.data.slice(pos + 1, pos + self.seq_len + 1);
                 samples.push(sample.to_vec());
-                targets.push(target[0]);
+                targets.push(target.to_vec());
             }
         } else {
             for i in 0..self.batch_size {
                 let pos = self.pos + i;
-                let sample = self.data.slice(pos, pos + self.seq_len);
-                let target = self.data.slice(pos + self.seq_len, pos + self.seq_len + 1);
+                let sample = self.data.slice(pos , pos + self.seq_len);
+                let target = self.data.slice(pos + 1 , pos + self.seq_len + 1 );
                 samples.push(sample.to_vec());
-                targets.push(target[0]);
+                targets.push(target.to_vec());
             }
         }
 
@@ -223,8 +225,8 @@ mod tests {
 
         // batches of size 2, sequence length 3
 
-        // batch 1: (tensor([[0, 1, 2], [1, 2, 3]]), tensor([[3], [4]]))
-        // batch 2: (tensor([[2, 3, 4], [3, 4, 5]]), tensor([[5], [6]]))
+        // batch 1: (tensor([[0, 1, 2], [1, 2, 3]]), tensor([[1, 2, 3], [2, 3, 4]]))
+        // batch 2: (tensor([[2, 3, 4], [3, 4, 5]]), tensor([[3, 4, 5], [4, 5, 6]]))
 
         let data = "abcdefg";
         let seq_len = 3;
@@ -236,10 +238,10 @@ mod tests {
 
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples, vec![vec![0, 1, 2], vec![1, 2, 3]]);
-        assert_eq!(targets, vec![3, 4]);
+        assert_eq!(targets, vec![vec![1, 2, 3], vec![2, 3, 4]]);
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples, vec![vec![2, 3, 4], vec![3, 4, 5]]);
-        assert_eq!(targets, vec![5, 6]);
+        assert_eq!(targets, vec![vec![3, 4, 5], vec![4, 5, 6]]);
     }
 
     #[test]
@@ -249,8 +251,8 @@ mod tests {
 
         // batches of size 2, sequence length 3
 
-        // batch 1: (tensor([[0, 1, 2], [1, 2, 3]]), tensor([[3], [4]]))
-        // with a leftover sample: (tensor([[2, 3, 4]]), tensor([[5]]))
+        // batch 1: (tensor([[0, 1, 2], [1, 2, 3]]), tensor([[1, 2, 3], [2, 3, 4]]))
+        // with a leftover sample: (tensor([[2, 3, 4]]), tensor([[3, 4, 5]]))
 
         let data = "abcdef";
         let seq_len = 3;
@@ -262,7 +264,7 @@ mod tests {
 
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples, vec![vec![0, 1, 2], vec![1, 2, 3]]);
-        assert_eq!(targets, vec![3, 4]);
+        assert_eq!(targets, vec![vec![1, 2, 3], vec![2, 3, 4]]);
         assert!(loader.next_batch().is_none());
     }
 
@@ -273,8 +275,8 @@ mod tests {
 
         // batches of size 2, sequence length 3
 
-        // batch 1: (tensor([[1, 2, 3], [0, 1, 2]]), tensor([[4], [3]]))
-        // batch 2: (tensor([[2, 3, 4], [3, 4, 5]]), tensor([[5], [6]]))
+        // batch 1: (tensor([[1, 2, 3], [0, 1, 2]]), tensor([[2, 3, 4], [1, 2, 3]]))
+        // batch 2: (tensor([[2, 3, 4], [3, 4, 5]]), tensor([[3, 4, 5], [4, 5, 6]]))
 
         let data = "abcdefg";
         let seq_len = 3;
@@ -289,10 +291,10 @@ mod tests {
 
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples, vec![vec![1, 2, 3], vec![0, 1, 2],]);
-        assert_eq!(targets, vec![4, 3]);
+        assert_eq!(targets, vec![vec![2, 3, 4], vec![1, 2, 3]]);
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples, vec![vec![2, 3, 4], vec![3, 4, 5]]);
-        assert_eq!(targets, vec![5, 6]);
+        assert_eq!(targets, vec![vec![3, 4, 5], vec![4, 5, 6]]);
         assert!(loader.next_batch().is_none());
     }
 }

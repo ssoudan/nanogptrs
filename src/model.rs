@@ -52,6 +52,16 @@ impl nn::ModuleT for BigramLanguageModel {
     }
 }
 
+/// Compute the loss
+///
+/// Use cross entropy loss.
+pub fn loss(logits: &Tensor, targets: &Tensor) -> Tensor {
+    let (b, t, c) = logits.size3().unwrap();
+
+    logits.view([b * t, c])
+           .cross_entropy_for_logits(&targets.view([b * t]))
+}
+
 /// Test the BigramLanguageModel
 #[test]
 fn test_bigram_language_model() {
@@ -70,13 +80,6 @@ fn test_bigram_language_model() {
 
     let logits = model.forward(&xs);
     assert_eq!(logits.size(), [batch_size, seq_len, vocab_size]);
-
-    let loss = |logits: &Tensor, targets: &Tensor| {
-        let (b, t, _) = logits.size3().unwrap();
-        let logits = logits.view([b * t, vocab_size]);
-        let targets = targets.view([b * t]);
-        logits.cross_entropy_loss::<Tensor>(&targets, None, tch::Reduction::Mean, -100, 0.)
-    };
 
     let loss = loss(&logits, &xs);
     println!("loss: {:?}", loss);

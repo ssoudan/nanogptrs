@@ -53,29 +53,68 @@ impl nn::ModuleT for BigramLanguageModel {
 #[derive(Debug)]
 pub struct NanoGpt {
     /// The embedding layer
-    embedding: nn::Embedding,
+    token_embedding: nn::Embedding,
+    /// The position embedding layer
+    pub position_embedding: nn::Embedding,
     /// LM head
     lm_head: nn::Linear,
     // /// The linear layer
     // linear: nn::Linear,
+    /// The embedding size
+    n_embd: i64,
+    /// The vocabulary size
+    vocab_size: i64,
 }
 
 impl NanoGpt {
     /// Create a new NanoGpt
-    pub fn new(vs: &nn::Path, vocab_size: i64, n_embd: i64) -> Self {
-        let embedding = nn::embedding(vs / "embedding", vocab_size, n_embd, Default::default());
+    pub fn new(vs: &nn::Path, vocab_size: i64, seq_len: i64, n_embd: i64) -> Self {
+        let token_embedding =
+            nn::embedding(vs / "embedding", vocab_size, n_embd, Default::default());
+
+        let position_embedding = nn::embedding(
+            vs / "position_embedding",
+            seq_len,
+            n_embd,
+            Default::default(),
+        );
 
         let lm_head = nn::linear(vs / "lm_head", n_embd, vocab_size, Default::default());
-        // let linear = nn::linear(vs / "linear", embedding_dim, hidden_dim, Default::default());
 
-        Self { embedding, lm_head }
+        Self {
+            token_embedding,
+            position_embedding,
+            lm_head,
+            n_embd,
+            vocab_size,
+        }
     }
 
     /// Forward pass
     pub fn forward(&self, xs: &Tensor) -> Tensor {
-        let tok_emb = xs.apply(&self.embedding); // [batch_size, seq_len, n_embd]
+        let (b, t) = xs.size2().unwrap();
 
-        tok_emb.apply(&self.lm_head) // [batch_size, seq_len, vocab_size]
+        let tok_emb = xs.apply(&self.token_embedding); // [batch_size, seq_len, n_embd]
+
+        let device = xs.device();
+
+        let pos = Tensor::arange(t, (tch::Kind::Int64, device)); // [seq_len=t]
+
+        let pos = pos.unsqueeze(0); // [1, seq_len=t]
+        assert_eq!(pos.size(), &[1, t]);
+
+        let pos = pos.repeat(&[b, 1, 1]);
+        assert_eq!(pos.size(), &[b, 1, t]);
+
+        let pos_emb = pos.apply(&self.position_embedding); // [seq_len, n_embd]
+        assert_eq!(pos_emb.size(), &[t, self.n_embd]);
+
+        let x = tok_emb + pos_emb; // [batch_size, seq_len, n_embd]
+        assert_eq!(x.size(), &[b, t, self.n_embd]);
+
+        let x = x.apply(&self.lm_head); // [batch_size, seq_len, vocab_size]
+        assert_eq!(x.size(), &[b, t, self.vocab_size]);
+        x
     }
 }
 

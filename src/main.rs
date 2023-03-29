@@ -31,6 +31,12 @@ struct NanoGptArgs {
     n_embd: i64,
 }
 
+impl Default for NanoGptArgs {
+    fn default() -> Self {
+        Self { n_embd: 32 }
+    }
+}
+
 /// The model to use.
 #[derive(Subcommand, Debug, Clone, Copy)]
 enum Model {
@@ -38,6 +44,12 @@ enum Model {
     NanoGpt(NanoGptArgs),
     /// BigramLanguageModel
     BigramLanguageModel,
+}
+
+impl Default for Model {
+    fn default() -> Self {
+        Self::NanoGpt(NanoGptArgs::default())
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -49,7 +61,7 @@ struct Args {
 
     /// The model to use
     #[command(subcommand)]
-    model: Model,
+    model: Option<Model>,
 }
 
 fn main() {
@@ -135,10 +147,11 @@ fn main() {
 
     let vs = tch::nn::VarStore::new(device);
 
-    let model: Box<dyn LMModel> = match args.model {
+    let model: Box<dyn LMModel> = match args.model.unwrap_or_else(|| Model::default()) {
         Model::NanoGpt(NanoGptArgs { n_embd }) => Box::new(nanogptrs::model::NanoGpt::new(
             &vs.root(),
             vocab.size() as i64,
+            seq_len as i64,
             n_embd,
         )),
         Model::BigramLanguageModel => Box::new(nanogptrs::model::BigramLanguageModel::new(

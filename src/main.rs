@@ -1,4 +1,5 @@
 //! NanoGPTRS: A rust implementation of the NanoGPT
+use indicatif::{ProgressBar, ProgressStyle};
 use nanogptrs::data::{load_file, Loader, TokenizedData, Vocab};
 use nanogptrs::model::loss;
 use rand_chacha::rand_core::SeedableRng;
@@ -6,6 +7,8 @@ use tch::nn::{ModuleT, OptimizerConfig};
 use tch::Tensor;
 
 fn main() {
+    let device = tch::Device::Cpu;
+
     println!("Hello, world!");
 
     let t = Tensor::of_slice(&[3, 1, 4, 1, 5]);
@@ -72,11 +75,11 @@ fn main() {
 
     ///////
 
-    let vs = tch::nn::VarStore::new(tch::Device::Cpu);
+    let vs = tch::nn::VarStore::new(device);
 
     let model = nanogptrs::model::BigramLanguageModel::new(&vs.root(), vocab.size() as i64);
 
-    let xs = Tensor::zeros(&[1, 1], (tch::Kind::Int64, tch::Device::Cpu));
+    let xs = Tensor::zeros(&[1, 1], (tch::Kind::Int64, device));
     let max_len = 100;
     let ys = model.generate(xs, max_len);
     println!("generated: {:?}", ys);
@@ -88,18 +91,40 @@ fn main() {
 
     // train the model
     let lr = 1e-3;
-    let n_epochs = 10;
+    let n_epochs = 3;
 
     let mut opt = tch::nn::Adam::default().build(&vs, lr).unwrap();
 
-    let device = tch::Device::Cpu;
+    let multi_bar = indicatif::MultiProgress::new();
 
-    for epoch in 0..n_epochs {
-        println!("Epoch {}/{}", epoch + 1, n_epochs);
+    // epoch bar
+    let epoch_bar = multi_bar.add(ProgressBar::new(n_epochs as u64));
+    epoch_bar.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] Epoch {pos:>7}/{len:7} {msg}",
+            )
+            .unwrap()
+            .progress_chars("##-"),
+    );
+
+    for _epoch in 0..n_epochs {
+        epoch_bar.tick();
         let mut train_loss = 0.0;
         let mut train_n = 0;
 
         let train_start = std::time::Instant::now();
+
+        let training_bar = multi_bar.add(ProgressBar::new(train_dataloader.n_batches() as u64));
+        training_bar.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:20.green/blue}] Training {pos:>7}/{len:7} {msg}",
+                )
+                .unwrap()
+                .progress_chars("##-"),
+        );
+        training_bar.tick();
 
         train_dataloader.shuffle(&mut rng);
         while let Some((xs, ys)) = train_dataloader.next_batch() {
@@ -128,14 +153,34 @@ fn main() {
 
             train_loss += loss;
             train_n += 1;
+
+            if train_n % 100 == 0 {
+                training_bar.inc(100);
+            }
         }
+
+        training_bar.finish_and_clear();
+
         let train_time = train_start.elapsed().as_secs_f64();
-        println!(
-            "train_loss: {:.4} train_ppl: {:.4} train_time: {:.2}s",
+        epoch_bar.set_message(format!(
+            "[train] loss: {:.4} ppl: {:.4} time: {:.2}s",
             train_loss / train_n as f64,
             (train_loss / train_n as f64).exp(),
             train_time
+        ));
+
+        // validation
+        let validation_bar = multi_bar.add(ProgressBar::new(valid_dataloader.n_batches() as u64));
+        validation_bar.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:20.yellow/blue}] Validation {pos:>7}/{len:7} {msg}",
+                )
+                .unwrap()
+                .progress_chars("##-"),
         );
+
+        validation_bar.tick();
 
         let mut valid_loss = 0.0;
         let mut valid_n = 0;
@@ -163,15 +208,28 @@ fn main() {
 
             valid_loss += loss;
             valid_n += 1;
+
+            if valid_n % 100 == 0 {
+                validation_bar.inc(100);
+            }
         }
         let valid_time = valid_start.elapsed().as_secs_f64();
-        println!(
-            "valid_loss: {:.4} valid_ppl: {:.4} valid_time: {:.2}s",
+        epoch_bar.set_message(format!(
+            "[train] loss: {:.4} ppl: {:.4} time: {:.2}s [valid] loss: {:.4} ppl: {:.4} time: {:.2}s",
+            train_loss / train_n as f64,
+            (train_loss / train_n as f64).exp(),
+            train_time,
             valid_loss / valid_n as f64,
             (valid_loss / valid_n as f64).exp(),
             valid_time
-        );
+        ));
+
+        validation_bar.finish_and_clear();
+
+        epoch_bar.inc(1);
     }
+
+    epoch_bar.finish();
 
     // generate some text
     let xs = Tensor::zeros(&[1, 1], (tch::Kind::Int64, tch::Device::Cpu));

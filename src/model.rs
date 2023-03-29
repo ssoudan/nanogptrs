@@ -270,15 +270,15 @@ impl nn::ModuleT for NanoGpt {
         assert_eq!(x.size(), &[b, t, self.n_embd]);
 
         // sa heads
-        let x = self.sa_heads.forward_t(&x, train); // [batch_size, seq_len, n_embd]
+        let x = x.apply_t(&self.sa_heads, train); // [batch_size, seq_len, n_embd]
         assert_eq!(x.size(), &[b, t, self.n_embd]);
 
         // ffwd
-        let x = x.apply(&self.ffwd); // [batch_size, seq_len, n_embd]
+        let x = x.apply_t(&self.ffwd, train); // [batch_size, seq_len, n_embd]
         assert_eq!(x.size(), &[b, t, self.n_embd]);
 
         // lm head
-        let x = x.apply(&self.lm_head); // [batch_size, seq_len, vocab_size]
+        let x = x.apply_t(&self.lm_head, train); // [batch_size, seq_len, vocab_size]
         assert_eq!(x.size(), &[b, t, self.vocab_size]);
         x
     }

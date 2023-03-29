@@ -37,6 +37,23 @@ impl Default for NanoGptArgs {
     }
 }
 
+/// Training parameters.
+#[derive(Parser, Debug, Clone, Copy)]
+struct TrainingParameters {
+    /// Learning rate
+    #[arg(short, long, default_value = "0.001")]
+    lr: f64,
+    /// Number of epochs
+    #[arg(short, long, default_value = "3")]
+    n_epochs: usize,
+    /// Batch size
+    #[arg(short, long, default_value = "32")]
+    batch_size: usize,
+    /// Sequence length
+    #[arg(short, long, default_value = "8")]
+    seq_len: usize,
+}
+
 /// The model to use.
 #[derive(Subcommand, Debug, Clone, Copy)]
 enum Model {
@@ -62,6 +79,10 @@ struct Args {
     /// The model to use
     #[command(subcommand)]
     model: Option<Model>,
+
+    /// Training parameters
+    #[clap(flatten)]
+    training_params: TrainingParameters,
 }
 
 fn main() {
@@ -72,6 +93,10 @@ fn main() {
         Device::Cuda => tch::Device::cuda_if_available(),
         Device::Mps => tch::Device::Mps,
     };
+    let seq_len = args.training_params.seq_len;
+    let batch_size = args.training_params.batch_size;
+    let n_epochs = args.training_params.n_epochs;
+    let lr = args.training_params.lr;
 
     // if not built in release mode, print a big warning
     #[cfg(debug_assertions)]
@@ -117,9 +142,6 @@ fn main() {
 
     let train_data = TokenizedData::new(train_data, vocab.clone());
     let valid_data = TokenizedData::new(valid_data, vocab.clone());
-
-    let batch_size = 4;
-    let seq_len = 8;
 
     let mut train_dataloader = Loader::from_tokenized_data(train_data, seq_len, batch_size, device);
     let mut valid_dataloader = Loader::from_tokenized_data(valid_data, seq_len, batch_size, device);
@@ -171,9 +193,6 @@ fn main() {
     println!("decoded: {}", decoded);
 
     // train the model
-    let lr = 1e-3;
-    let n_epochs = 10;
-
     let mut opt = tch::nn::Adam::default().build(&vs, lr).unwrap();
 
     // Initialize the progress bars
@@ -240,8 +259,8 @@ fn main() {
     pb_reporter.epoch_end();
 
     // generate some text
-    let xs = Tensor::zeros(&[1, 1], (tch::Kind::Int64, tch::Device::Cpu));
-    let max_len = 100;
+    let xs = Tensor::zeros(&[1, seq_len as i64], (tch::Kind::Int64, tch::Device::Cpu));
+    let max_len = 1500;
     let ys = model.generate(xs, max_len);
     println!("generated: {:?}", ys);
 

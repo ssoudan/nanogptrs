@@ -60,7 +60,7 @@ impl ProgressReporter for PbProgressReporter {
         let train_bar = self.mb.add(ProgressBar::new(n_train_batches as u64));
         train_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} TRAINING [{elapsed_precise}] {bar:20.green/blue} {pos:>7}/{len:7} {msg}")
+                .template("{spinner:.green} TRAINING [{elapsed_precise}] {bar:20.green/blue} {pos:>7}/{len:7} {per_sec:.2} {msg}")
                 .unwrap().progress_chars("##-"),
         );
         train_bar.set_message(format!("Epoch {}", self.current_epoch));
@@ -81,7 +81,7 @@ impl ProgressReporter for PbProgressReporter {
         let estimate_bar = self.mb.add(ProgressBar::new(2));
         estimate_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} EVAL     [{elapsed_precise}] {bar:20.magenta/blue} {pos:>7}/{len:7} {msg}")
+                .template("{spinner:.green} EVAL     [{elapsed_precise}] {bar:20.magenta/blue} {pos:>7}/{len:7} {per_sec:.2} {msg}")
                 .unwrap().progress_chars("##-"),
         );
         estimate_bar.set_message(format!("Estimating epoch {}", self.current_epoch));
@@ -133,7 +133,7 @@ impl estimate::ProgressReporter for PbProgressReporter {
         let train_loss_bar = self.mb.add(ProgressBar::new(total_train_batches as u64));
         train_loss_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green}        T [{elapsed_precise}] {bar:20.yellow/blue} {pos:>7}/{len:7} {msg}")
+                .template("{spinner:.green}        T [{elapsed_precise}] {bar:20.yellow/blue} {pos:>7}/{len:7} {per_sec:.2} {msg}")
                 .unwrap().progress_chars("##-"),
         );
 
@@ -172,7 +172,7 @@ impl estimate::ProgressReporter for PbProgressReporter {
         let valid_loss_bar = self.mb.add(ProgressBar::new(total_valid_batches as u64));
         valid_loss_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green}        E [{elapsed_precise}] {bar:20.yellow/blue} {pos:>7}/{len:7} {msg}")
+                .template("{spinner:.green}        E [{elapsed_precise}] {bar:20.yellow/blue} {pos:>7}/{len:7} {per_sec:.2} {msg}")
                 .unwrap().progress_chars("##-"),
         );
         self.estimate_valid_bar = Some(valid_loss_bar);

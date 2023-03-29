@@ -91,7 +91,7 @@ fn main() {
 
     // train the model
     let lr = 1e-3;
-    let n_epochs = 3;
+    let n_epochs = 10;
 
     let mut opt = tch::nn::Adam::default().build(&vs, lr).unwrap();
 
@@ -102,7 +102,7 @@ fn main() {
     epoch_bar.set_style(
         ProgressStyle::default_bar()
             .template(
-                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] Epoch {pos:>7}/{len:7} {msg}",
+                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] Epoch {pos:>7}/{len:7} {msg.4}",
             )
             .unwrap()
             .progress_chars("##-"),
@@ -119,7 +119,7 @@ fn main() {
         training_bar.set_style(
             ProgressStyle::default_bar()
                 .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:20.green/blue}] Training {pos:>7}/{len:7} {msg}",
+                    "{spinner:.green} [{elapsed_precise}] [{bar:20.green/blue}] Training {human_pos:>7}/{human_len:7} @ {per_sec:.1} {msg.4}",
                 )
                 .unwrap()
                 .progress_chars("##-"),
@@ -154,8 +154,8 @@ fn main() {
             train_loss += loss;
             train_n += 1;
 
-            if train_n % 100 == 0 {
-                training_bar.inc(100);
+            if train_n % 1000 == 0 {
+                training_bar.inc(1000);
             }
         }
 
@@ -174,7 +174,7 @@ fn main() {
         validation_bar.set_style(
             ProgressStyle::default_bar()
                 .template(
-                    "{spinner:.green} [{elapsed_precise}] [{bar:20.yellow/blue}] Validation {pos:>7}/{len:7} {msg}",
+                    "{spinner:.green} [{elapsed_precise}] [{bar:20.yellow/blue}] Validation {human_pos:>7}/{human_len:7} @ {per_sec:.1} {msg.4}",
                 )
                 .unwrap()
                 .progress_chars("##-"),
@@ -209,8 +209,8 @@ fn main() {
             valid_loss += loss;
             valid_n += 1;
 
-            if valid_n % 100 == 0 {
-                validation_bar.inc(100);
+            if valid_n % 200 == 0 {
+                validation_bar.inc(200);
             }
         }
         let valid_time = valid_start.elapsed().as_secs_f64();

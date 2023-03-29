@@ -12,7 +12,7 @@ tch_download = ["tch/default"]
 tch = { version = "0.11.0", default-features = false, features = [] }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-indicatif = "0.17.3"
+indicatif = { version = "0.17.3", features = ["improved_unicode"] }
 
 [dev-dependencies]
 rand_chacha = "0.3.1"

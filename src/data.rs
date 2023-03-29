@@ -1,4 +1,5 @@
 use rand::prelude::*;
+use tch::Tensor;
 
 /// Load data/input.txt and return a string
 pub fn load_file() -> String {
@@ -86,18 +87,22 @@ impl TokenizedData {
     }
 }
 
-type Batch = (Vec<Vec<i64>>, Vec<Vec<i64>>);
+/// A batch of data
+/// The first element is the input and the second element is the target.
+/// The input is a tensor of size `batch_size x seq_len`.
+/// The target is a tensor of size `batch_size x seq_len`.
+type Batch = (Tensor, Tensor);
 
 /// Dataloader for tokenized data
 /// Samples are tuples of the form (sample, target).
-/// The sample is a tensor of size `batch_size x data_len`.
-/// The target is a tensor of size `batch_size x data_len`.
+/// The sample is a tensor of size `batch_size x seq_len`.
+/// The target is a tensor of size `batch_size x seq_len`.
 ///
 /// Targets are the next token in the sequence.
 ///
 /// Batches are made of `batch_size` random samples.
 ///
-/// For example, if data is [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12], `data_len` is 3 and `batch_size` is 2,
+/// For example, if data is [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12], `seq_len` is 3 and `batch_size` is 2,
 /// the data loader could return the following batches:
 /// - batch 1: (tensor([[0, 1, 2], [3, 4, 5]]), tensor([[1, 2, 3], [4, 5, 6]]))
 /// - batch 2: (tensor([[6, 7, 8], [9, 10, 11]]), tensor([[7, 8, 9], [10, 11, 12]]))
@@ -209,6 +214,14 @@ impl Loader {
 
         self.pos += self.batch_size;
 
+        let samples: Vec<i64> = samples.into_iter().flatten().collect();
+        let targets: Vec<i64> = targets.into_iter().flatten().collect();
+
+        let samples =
+            Tensor::of_slice(&samples).reshape(&[self.batch_size as i64, self.seq_len as i64]);
+        let targets =
+            Tensor::of_slice(&targets).reshape(&[self.batch_size as i64, self.seq_len as i64]);
+
         Some((samples, targets))
     }
 }
@@ -217,6 +230,13 @@ impl Loader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn to_tensor(batches: Vec<Vec<i64>>) -> Tensor {
+        let batch_size = batches.len();
+
+        let data: Vec<i64> = batches.into_iter().flatten().collect();
+        Tensor::of_slice(&data).reshape(&[batch_size as i64, -1])
+    }
 
     #[test]
     fn test_data_loader() {
@@ -237,11 +257,12 @@ mod tests {
         assert_eq!(loader.n_batches(), 2);
 
         let (samples, targets) = loader.next_batch().unwrap();
-        assert_eq!(samples, vec![vec![0, 1, 2], vec![1, 2, 3]]);
-        assert_eq!(targets, vec![vec![1, 2, 3], vec![2, 3, 4]]);
+
+        assert_eq!(samples, to_tensor(vec![vec![0, 1, 2], vec![1, 2, 3]]));
+        assert_eq!(targets, to_tensor(vec![vec![1, 2, 3], vec![2, 3, 4]]));
         let (samples, targets) = loader.next_batch().unwrap();
-        assert_eq!(samples, vec![vec![2, 3, 4], vec![3, 4, 5]]);
-        assert_eq!(targets, vec![vec![3, 4, 5], vec![4, 5, 6]]);
+        assert_eq!(samples, to_tensor(vec![vec![2, 3, 4], vec![3, 4, 5]]));
+        assert_eq!(targets, to_tensor(vec![vec![3, 4, 5], vec![4, 5, 6]]));
     }
 
     #[test]
@@ -263,8 +284,8 @@ mod tests {
         assert_eq!(loader.n_batches(), 1);
 
         let (samples, targets) = loader.next_batch().unwrap();
-        assert_eq!(samples, vec![vec![0, 1, 2], vec![1, 2, 3]]);
-        assert_eq!(targets, vec![vec![1, 2, 3], vec![2, 3, 4]]);
+        assert_eq!(samples, to_tensor(vec![vec![0, 1, 2], vec![1, 2, 3]]));
+        assert_eq!(targets, to_tensor(vec![vec![1, 2, 3], vec![2, 3, 4]]));
         assert!(loader.next_batch().is_none());
     }
 
@@ -290,11 +311,11 @@ mod tests {
         assert_eq!(loader.n_batches(), 2);
 
         let (samples, targets) = loader.next_batch().unwrap();
-        assert_eq!(samples, vec![vec![1, 2, 3], vec![0, 1, 2],]);
-        assert_eq!(targets, vec![vec![2, 3, 4], vec![1, 2, 3]]);
+        assert_eq!(samples, to_tensor(vec![vec![1, 2, 3], vec![0, 1, 2]]));
+        assert_eq!(targets, to_tensor(vec![vec![2, 3, 4], vec![1, 2, 3]]));
         let (samples, targets) = loader.next_batch().unwrap();
-        assert_eq!(samples, vec![vec![2, 3, 4], vec![3, 4, 5]]);
-        assert_eq!(targets, vec![vec![3, 4, 5], vec![4, 5, 6]]);
+        assert_eq!(samples, to_tensor(vec![vec![2, 3, 4], vec![3, 4, 5]]));
+        assert_eq!(targets, to_tensor(vec![vec![3, 4, 5], vec![4, 5, 6]]));
         assert!(loader.next_batch().is_none());
     }
 }

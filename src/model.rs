@@ -25,13 +25,10 @@ impl BigramLanguageModel {
         xs.apply(&self.embedding)
         // xs.apply(&self.linear)
     }
+}
 
-    /// Generate a sequence of tokens from a starting sequence of tokens
-    /// and a maximum length.
-    /// xs: the starting sequence of tokens of shape [batch_size, seq_len]
-    /// max_len: the maximum length of the generated sequence
-    /// return: the generated sequence of tokens of shape [batch_size, max_len]
-    pub fn generate(&self, xs: Tensor, max_len: i64) -> Tensor {
+impl LMModel for BigramLanguageModel {
+    fn generate(&self, xs: Tensor, max_len: i64) -> Tensor {
         let mut xs = xs;
         for _ in 0..max_len {
             // take the last logits
@@ -50,6 +47,69 @@ impl nn::ModuleT for BigramLanguageModel {
     fn forward_t(&self, xs: &Tensor, _train: bool) -> Tensor {
         self.forward(xs)
     }
+}
+
+/// NanoGpt is a language model.
+#[derive(Debug)]
+pub struct NanoGpt {
+    /// The embedding layer
+    embedding: nn::Embedding,
+    /// LM head
+    lm_head: nn::Linear,
+    // /// The linear layer
+    // linear: nn::Linear,
+}
+
+impl NanoGpt {
+    /// Create a new NanoGpt
+    pub fn new(vs: &nn::Path, vocab_size: i64, n_embd: i64) -> Self {
+        let embedding = nn::embedding(vs / "embedding", vocab_size, n_embd, Default::default());
+
+        let lm_head = nn::linear(vs / "lm_head", n_embd, vocab_size, Default::default());
+        // let linear = nn::linear(vs / "linear", embedding_dim, hidden_dim, Default::default());
+
+        Self { embedding, lm_head }
+    }
+
+    /// Forward pass
+    pub fn forward(&self, xs: &Tensor) -> Tensor {
+        let tok_emb = xs.apply(&self.embedding); // [batch_size, seq_len, n_embd]
+
+        tok_emb.apply(&self.lm_head) // [batch_size, seq_len, vocab_size]
+    }
+}
+
+impl LMModel for NanoGpt {
+    fn generate(&self, xs: Tensor, max_len: i64) -> Tensor {
+        let mut xs = xs;
+        for _ in 0..max_len {
+            // take the last logits
+            let logits = self.forward(&xs).i((.., -1, ..));
+            //  apply softmax to get the probabilities of the next token
+            let probs = logits.softmax(-1, tch::Kind::Float);
+            // sample the next token
+            let next_token = probs.multinomial(1, true);
+            xs = Tensor::cat(&[xs, next_token], 1);
+        }
+        xs
+    }
+}
+
+impl nn::ModuleT for NanoGpt {
+    fn forward_t(&self, xs: &Tensor, _train: bool) -> Tensor {
+        self.forward(xs)
+    }
+}
+
+/// LMModel is a language model.
+pub trait LMModel: nn::ModuleT {
+    /// Generate a sequence of tokens from a starting sequence of tokens
+    /// and a maximum length.
+    ///
+    /// xs: the starting sequence of tokens of shape [batch_size, seq_len]
+    /// max_len: the maximum length of the generated sequence
+    /// return: the generated sequence of tokens of shape [batch_size, max_len]
+    fn generate(&self, xs: Tensor, max_len: i64) -> Tensor;
 }
 
 /// Compute the loss
@@ -105,3 +165,5 @@ fn test_bigram_language_model() {
     let second: Vec<i64> = second.into();
     println!("second: {:?}", second);
 }
+
+// TODO(ssoudan): test the LanguageModel

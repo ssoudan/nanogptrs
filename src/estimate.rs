@@ -1,5 +1,5 @@
 use crate::data::Loader;
-use tch::nn::ModuleT;
+use crate::model::LMModel;
 use tch::Tensor;
 
 /// Estimates of the loss on the training and validation sets.
@@ -62,7 +62,7 @@ impl<'a> LossEstimator<'a> {
     /// Estimate the loss of a model on the training and validation sets.
     pub fn estimate_loss(
         &mut self,
-        model: &impl ModuleT,
+        model: &dyn LMModel,
         train_iters: usize,
         eval_iters: usize,
         progress_callback: &mut impl ProgressReporter,

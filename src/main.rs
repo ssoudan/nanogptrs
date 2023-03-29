@@ -1,14 +1,15 @@
 //! NanoGPTRS: A rust implementation of the NanoGPT
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use nanogptrs::data::{load_file, Loader, TokenizedData, Vocab};
 use nanogptrs::estimate::LossEstimator;
 use nanogptrs::learn::{PbProgressReporter, ProgressReporter};
-use nanogptrs::model::loss;
+use nanogptrs::model::{loss, LMModel};
 use rand_chacha::rand_core::SeedableRng;
-use tch::nn::{ModuleT, OptimizerConfig};
+use tch::nn::OptimizerConfig;
 use tch::Tensor;
 
 // TODO(ssoudan): Tensorboard?
+// TODO(ssoudan): FP precision
 
 /// Torch device to use.
 #[derive(ValueEnum, Debug, Clone, Copy, Default)]
@@ -22,12 +23,33 @@ enum Device {
     Mps,
 }
 
+/// Arguments for the NanoGPT model.
+#[derive(Parser, Debug, Clone, Copy)]
+struct NanoGptArgs {
+    /// the size of the embedding to use
+    #[arg(short, long, default_value = "32")]
+    n_embd: i64,
+}
+
+/// The model to use.
+#[derive(Subcommand, Debug, Clone, Copy)]
+enum Model {
+    /// NanoGPT
+    NanoGpt(NanoGptArgs),
+    /// BigramLanguageModel
+    BigramLanguageModel,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// The device to use
-    #[arg(short, long, default_value = "cpu")]
+    #[arg(short, long, default_value = "cuda")]
     device: Device,
+
+    /// The model to use
+    #[command(subcommand)]
+    model: Model,
 }
 
 fn main() {
@@ -113,7 +135,17 @@ fn main() {
 
     let vs = tch::nn::VarStore::new(device);
 
-    let model = nanogptrs::model::BigramLanguageModel::new(&vs.root(), vocab.size() as i64);
+    let model: Box<dyn LMModel> = match args.model {
+        Model::NanoGpt(NanoGptArgs { n_embd }) => Box::new(nanogptrs::model::NanoGpt::new(
+            &vs.root(),
+            vocab.size() as i64,
+            n_embd,
+        )),
+        Model::BigramLanguageModel => Box::new(nanogptrs::model::BigramLanguageModel::new(
+            &vs.root(),
+            vocab.size() as i64,
+        )),
+    };
 
     let xs = Tensor::zeros(&[1, 1], (tch::Kind::Int64, device));
     let max_len = 100;
@@ -182,7 +214,7 @@ fn main() {
         let iters = valid_dataloader.n_batches();
         let mut estimator = LossEstimator::new(&mut train_dataloader, &mut valid_dataloader, loss);
         let loss_estimates = estimator.estimate_loss(
-            &model,
+            model.as_ref(),
             iters, // use the same number of batches for training and validation
             iters,
             &mut pb_reporter,

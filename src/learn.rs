@@ -95,7 +95,7 @@ impl ProgressReporter for PbProgressReporter {
     fn estimate_end(&mut self, loss_estimates: LossEstimates) {
         if let Some(estimate_bar) = &self.estimate_bar {
             estimate_bar.set_message(format!(
-                "Epoch {} train loss: {:.4}, valid loss: {:.4}",
+                "Epoch {} Train loss: {:.4}, Valid loss: {:.4}",
                 self.current_epoch, loss_estimates.train_loss, loss_estimates.valid_loss
             ));
             estimate_bar.finish();
@@ -157,7 +157,7 @@ impl estimate::ProgressReporter for PbProgressReporter {
 
         if let Some(estimate_bar) = &self.estimate_bar {
             estimate_bar.set_message(format!(
-                "Epoch {} Train loss: {}",
+                "Epoch {} Train loss: {:.4}",
                 self.current_epoch, train_loss
             ));
         }
@@ -192,7 +192,7 @@ impl estimate::ProgressReporter for PbProgressReporter {
 
         if let Some(estimate_bar) = &self.estimate_bar {
             estimate_bar.set_message(format!(
-                "Epoch {} Train loss: {} Valid loss: {}",
+                "Epoch {} Train loss: {:.4}, valid loss: {:.4}",
                 self.current_epoch, self.train_loss, valid_loss
             ));
         }

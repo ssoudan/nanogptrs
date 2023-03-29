@@ -170,6 +170,21 @@ impl nn::ModuleT for MultiHeadSelfAttention {
     }
 }
 
+/// Feed forward layer
+#[derive(Debug)]
+struct FeedForward {
+    net: nn::Linear,
+}
+
+impl FeedForward {
+    /// Create a new FeedForward
+    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, n_embd: i64) -> Self {
+        let vs = vs.borrow();
+        let net = nn::linear(vs / "net", n_embd, n_embd, Default::default());
+        Self { net }
+    }
+}
+
 /// NanoGpt is a language model.
 #[derive(Debug)]
 pub struct NanoGpt {
@@ -181,6 +196,8 @@ pub struct NanoGpt {
     lm_head: nn::Linear,
     /// SA heads
     sa_heads: MultiHeadSelfAttention,
+    /// Feed forward layer
+    ffwd: FeedForward,
     /// The embedding size
     n_embd: i64,
     /// The vocabulary size
@@ -207,6 +224,8 @@ impl NanoGpt {
         let head_size = n_embd / 4;
         let sa_heads = MultiHeadSelfAttention::new(vs / "sa_heads", seq_len, n_embd, head_size, 4);
 
+        let ffwd = FeedForward::new(vs / "ffwd", n_embd);
+
         let lm_head = nn::linear(vs / "lm_head", n_embd, vocab_size, Default::default());
 
         Self {
@@ -214,10 +233,17 @@ impl NanoGpt {
             position_embedding,
             lm_head,
             sa_heads,
+            ffwd,
             n_embd,
             vocab_size,
             seq_len,
         }
+    }
+}
+
+impl nn::ModuleT for FeedForward {
+    fn forward_t(&self, xs: &Tensor, _train: bool) -> Tensor {
+        xs.apply(&self.net).relu()
     }
 }
 
@@ -245,6 +271,10 @@ impl nn::ModuleT for NanoGpt {
 
         // sa heads
         let x = self.sa_heads.forward_t(&x, train); // [batch_size, seq_len, n_embd]
+        assert_eq!(x.size(), &[b, t, self.n_embd]);
+
+        // ffwd
+        let x = x.apply(&self.ffwd); // [batch_size, seq_len, n_embd]
         assert_eq!(x.size(), &[b, t, self.n_embd]);
 
         // lm head

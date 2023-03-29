@@ -1,8 +1,8 @@
 //! NanoGPTRS: A rust implementation of the NanoGPT
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use clap::{Parser, ValueEnum};
 use nanogptrs::data::{load_file, Loader, TokenizedData, Vocab};
-use nanogptrs::learn;
-use nanogptrs::learn::{estimate_loss, LossEstimates};
+use nanogptrs::estimate::LossEstimator;
+use nanogptrs::learn::{PbProgressReporter, ProgressReporter};
 use nanogptrs::model::loss;
 use rand_chacha::rand_core::SeedableRng;
 use tch::nn::{ModuleT, OptimizerConfig};
@@ -10,212 +10,44 @@ use tch::Tensor;
 
 // TODO(ssoudan): Tensorboard?
 
-/// Progress reporter that uses the `indicatif` crate to display progress bars.
-struct PbProgressReporter {
-    mb: MultiProgress,
-    epoch_bar: Option<ProgressBar>,
-    train_bar: Option<ProgressBar>,
-    estimate_bar: Option<ProgressBar>,
-    estimate_train_bar: Option<ProgressBar>,
-    estimate_valid_bar: Option<ProgressBar>,
-    current_epoch: usize,
-    train_loss: f64,
-    valid_loss: f64,
+/// Torch device to use.
+#[derive(ValueEnum, Debug, Clone, Copy, Default)]
+enum Device {
+    /// CPU
+    #[default]
+    Cpu,
+    /// CUDA if available
+    Cuda,
+    /// MPS
+    Mps,
 }
 
-impl PbProgressReporter {
-    /// Create a new progress reporter that uses the `indicatif` crate to display progress bars.
-    pub fn new() -> Self {
-        let mb = MultiProgress::new();
-        PbProgressReporter {
-            mb,
-            epoch_bar: None,
-            train_bar: None,
-            estimate_bar: None,
-            estimate_train_bar: None,
-            estimate_valid_bar: None,
-            current_epoch: 0,
-            train_loss: 0.0,
-            valid_loss: 0.0,
-        }
-    }
-}
-
-impl ProgressReporter for PbProgressReporter {
-    fn epoch_start(&mut self, n_epochs: usize) {
-        let epoch_bar = self.mb.add(ProgressBar::new(n_epochs as u64));
-        epoch_bar.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} MASTER   [{elapsed_precise}] {bar:40.cyan/blue} Epoch {pos:>7}/{len:7} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
-        epoch_bar.tick();
-        self.epoch_bar = Some(epoch_bar);
-        self.current_epoch = 0;
-    }
-    fn epoch_progress(&mut self, current_epoch: usize) {
-        if let Some(epoch_bar) = &self.epoch_bar {
-            epoch_bar.set_position(current_epoch as u64);
-        }
-        self.current_epoch = current_epoch;
-    }
-    fn epoch_end(&mut self) {
-        if let Some(epoch_bar) = &self.epoch_bar {
-            epoch_bar.finish_and_clear();
-        }
-        self.epoch_bar = None;
-    }
-    fn train_start(&mut self, n_train_batches: usize) {
-        let train_bar = self.mb.add(ProgressBar::new(n_train_batches as u64));
-        train_bar.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} TRAINING [{elapsed_precise}] {bar:20.green/blue} {pos:>7}/{len:7} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
-        train_bar.set_message(format!("Epoch {}", self.current_epoch));
-        self.train_bar = Some(train_bar);
-    }
-    fn train_progress(&mut self, current_train_batches: usize) {
-        if let Some(train_bar) = &self.train_bar {
-            train_bar.set_position(current_train_batches as u64);
-        }
-    }
-    fn train_end(&mut self) {
-        if let Some(train_bar) = &self.train_bar {
-            train_bar.finish();
-        }
-        self.train_bar = None;
-    }
-    fn estimate_start(&mut self) {
-        let estimate_bar = self.mb.add(ProgressBar::new(2));
-        estimate_bar.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} EVAL     [{elapsed_precise}] {bar:20.magenta/blue} {pos:>7}/{len:7} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
-        estimate_bar.set_message(format!("Estimating epoch {}", self.current_epoch));
-        self.estimate_bar = Some(estimate_bar);
-    }
-    fn estimate_progress(&mut self) {
-        if let Some(estimate_bar) = &self.estimate_bar {
-            estimate_bar.inc(1);
-        }
-    }
-    fn estimate_end(&mut self, loss_estimates: LossEstimates) {
-        if let Some(estimate_bar) = &self.estimate_bar {
-            estimate_bar.set_message(format!(
-                "Epoch {} train loss: {:.4}, valid loss: {:.4}",
-                self.current_epoch, loss_estimates.train_loss, loss_estimates.valid_loss
-            ));
-            estimate_bar.finish();
-        }
-        self.estimate_bar = None;
-    }
-}
-
-/// A trait for reporting progress during training.
-pub trait ProgressReporter {
-    /// Called before epoch starts.
-    fn epoch_start(&mut self, n_epochs: usize);
-    /// Called when an epoch ends.
-    fn epoch_progress(&mut self, current_epoch: usize);
-    /// Called when all epochs have been processed.
-    fn epoch_end(&mut self);
-
-    /// Called when the training starts.
-    fn train_start(&mut self, n_train_batches: usize);
-    /// Called when some batches have been processed.
-    fn train_progress(&mut self, current_train_batches: usize);
-    /// Called when the training ends.
-    fn train_end(&mut self);
-
-    /// Called when the loss estimation starts.
-    fn estimate_start(&mut self);
-    /// Called when a stage of the loss estimation are completed.
-    fn estimate_progress(&mut self);
-    /// Called when the loss estimation ends.
-    fn estimate_end(&mut self, loss_estimates: LossEstimates);
-}
-
-impl learn::ProgressReporter for PbProgressReporter {
-    fn train_loss_start(&mut self, total_train_batches: usize) {
-        let train_loss_bar = self.mb.add(ProgressBar::new(total_train_batches as u64));
-        train_loss_bar.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green}        T [{elapsed_precise}] {bar:20.yellow/blue} {pos:>7}/{len:7} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
-
-        if let Some(estimate_bar) = &self.estimate_bar {
-            estimate_bar.set_message("Train loss estimation");
-        }
-        self.estimate_train_bar = Some(train_loss_bar);
-    }
-
-    fn train_loss_progress(&mut self, current_train_batches: usize) {
-        if let Some(train_loss_bar) = &self.estimate_train_bar {
-            train_loss_bar.set_position(current_train_batches as u64);
-        }
-    }
-
-    fn train_loss_end(&mut self, train_loss: f64) {
-        if let Some(train_loss_bar) = &self.estimate_train_bar {
-            train_loss_bar.finish_and_clear();
-        }
-        self.estimate_train_bar = None;
-
-        if let Some(estimate_bar) = &self.estimate_bar {
-            estimate_bar.set_message(format!(
-                "Epoch {} Train loss: {}",
-                self.current_epoch, train_loss
-            ));
-        }
-
-        self.train_loss = train_loss;
-
-        // progress on the estimate bar
-        self.estimate_progress();
-    }
-
-    fn valid_loss_start(&mut self, total_valid_batches: usize) {
-        let valid_loss_bar = self.mb.add(ProgressBar::new(total_valid_batches as u64));
-        valid_loss_bar.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green}        E [{elapsed_precise}] {bar:20.yellow/blue} {pos:>7}/{len:7} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
-        self.estimate_valid_bar = Some(valid_loss_bar);
-    }
-
-    fn valid_loss_progress(&mut self, current_valid_batches: usize) {
-        if let Some(valid_loss_bar) = &self.estimate_valid_bar {
-            valid_loss_bar.set_position(current_valid_batches as u64);
-        }
-    }
-
-    fn valid_loss_end(&mut self, valid_loss: f64) {
-        if let Some(valid_loss_bar) = &self.estimate_valid_bar {
-            valid_loss_bar.finish_and_clear();
-        }
-        self.estimate_valid_bar = None;
-
-        if let Some(estimate_bar) = &self.estimate_bar {
-            estimate_bar.set_message(format!(
-                "Epoch {} Train loss: {} Valid loss: {}",
-                self.current_epoch, self.train_loss, valid_loss
-            ));
-        }
-
-        self.valid_loss = valid_loss;
-    }
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// The device to use
+    #[arg(short, long, default_value = "cpu")]
+    device: Device,
 }
 
 fn main() {
-    let device = tch::Device::Cpu;
+    let args = Args::parse();
+
+    let device = match args.device {
+        Device::Cpu => tch::Device::Cpu,
+        Device::Cuda => tch::Device::cuda_if_available(),
+        Device::Mps => tch::Device::Mps,
+    };
+
+    // if not built in release mode, print a big warning
+    #[cfg(debug_assertions)]
+    {
+        println!("WARNING: This is a debug build. It will be very slow.");
+    }
 
     println!("Hello, world!");
 
-    let t = Tensor::of_slice(&[3, 1, 4, 1, 5]);
+    let t = Tensor::of_slice(&[3, 1, 4, 1, 5]).to(device);
     let t = t * 2;
     t.print();
 
@@ -255,8 +87,8 @@ fn main() {
     let batch_size = 4;
     let seq_len = 8;
 
-    let mut train_dataloader = Loader::from_tokenized_data(train_data, seq_len, batch_size);
-    let mut valid_dataloader = Loader::from_tokenized_data(valid_data, seq_len, batch_size);
+    let mut train_dataloader = Loader::from_tokenized_data(train_data, seq_len, batch_size, device);
+    let mut valid_dataloader = Loader::from_tokenized_data(valid_data, seq_len, batch_size, device);
 
     println!(
         "train_dataloader.n_batches(): {}",
@@ -300,7 +132,7 @@ fn main() {
     let mut opt = tch::nn::Adam::default().build(&vs, lr).unwrap();
 
     // Initialize the progress bars
-    let mut pb_reporter = PbProgressReporter::new();
+    let mut pb_reporter = PbProgressReporter::default();
 
     pb_reporter.epoch_start(n_epochs);
     for epoch in 0..n_epochs {
@@ -348,15 +180,12 @@ fn main() {
         valid_dataloader.shuffle(&mut rng);
 
         let iters = valid_dataloader.n_batches();
-        let loss_estimates = estimate_loss(
-            &mut train_dataloader,
-            &mut valid_dataloader,
+        let mut estimator = LossEstimator::new(&mut train_dataloader, &mut valid_dataloader, loss);
+        let loss_estimates = estimator.estimate_loss(
             &model,
-            device,
             iters, // use the same number of batches for training and validation
             iters,
             &mut pb_reporter,
-            loss,
         );
 
         pb_reporter.estimate_end(loss_estimates);

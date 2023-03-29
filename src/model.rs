@@ -58,8 +58,9 @@ impl nn::ModuleT for BigramLanguageModel {
 pub fn loss(logits: &Tensor, targets: &Tensor) -> Tensor {
     let (b, t, c) = logits.size3().unwrap();
 
-    logits.view([b * t, c])
-           .cross_entropy_for_logits(&targets.view([b * t]))
+    logits
+        .view([b * t, c])
+        .cross_entropy_for_logits(&targets.view([b * t]))
 }
 
 /// Test the BigramLanguageModel

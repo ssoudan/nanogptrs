@@ -1,9 +1,9 @@
 //! NanoGPTRS: A rust implementation of the NanoGPT
 use nanogptrs::data::{load_file, Loader, TokenizedData, Vocab};
+use nanogptrs::model::loss;
 use rand_chacha::rand_core::SeedableRng;
 use tch::nn::{ModuleT, OptimizerConfig};
 use tch::Tensor;
-use nanogptrs::model::loss;
 
 fn main() {
     println!("Hello, world!");
@@ -106,8 +106,14 @@ fn main() {
             let xs: Vec<i64> = xs.into_iter().flatten().collect();
             let ys: Vec<i64> = ys.into_iter().flatten().collect();
 
-            let xs = Tensor::of_slice(&xs).to_kind(tch::Kind::Int64).to(device).view([batch_size as i64, seq_len as i64]);
-            let ys = Tensor::of_slice(&ys).to_kind(tch::Kind::Int64).to(device).view([batch_size as i64, seq_len as i64]);
+            let xs = Tensor::of_slice(&xs)
+                .to_kind(tch::Kind::Int64)
+                .to(device)
+                .view([batch_size as i64, seq_len as i64]);
+            let ys = Tensor::of_slice(&ys)
+                .to_kind(tch::Kind::Int64)
+                .to(device)
+                .view([batch_size as i64, seq_len as i64]);
 
             let logits = model.forward_t(&xs, true);
 
@@ -118,7 +124,7 @@ fn main() {
             loss.backward();
             opt.step();
 
-            let loss: f64= loss.into();
+            let loss: f64 = loss.into();
 
             train_loss += loss;
             train_n += 1;
@@ -139,17 +145,21 @@ fn main() {
             let xs: Vec<i64> = xs.into_iter().flatten().collect();
             let ys: Vec<i64> = ys.into_iter().flatten().collect();
 
-            let xs = Tensor::of_slice(&xs).to_kind(tch::Kind::Int64).to(device).view([batch_size as i64, seq_len as i64]);
-            let ys = Tensor::of_slice(&ys).to_kind(tch::Kind::Int64).to(device).view([batch_size as i64, seq_len as i64]);
-
+            let xs = Tensor::of_slice(&xs)
+                .to_kind(tch::Kind::Int64)
+                .to(device)
+                .view([batch_size as i64, seq_len as i64]);
+            let ys = Tensor::of_slice(&ys)
+                .to_kind(tch::Kind::Int64)
+                .to(device)
+                .view([batch_size as i64, seq_len as i64]);
 
             let logits = model.forward_t(&xs, false);
-
 
             let loss = loss(&logits, &ys);
 
             // convert to a scalar
-            let loss: f64= loss.into();
+            let loss: f64 = loss.into();
 
             valid_loss += loss;
             valid_n += 1;
@@ -173,6 +183,4 @@ fn main() {
     let ys: Vec<i64> = ys.into();
     let decoded = vocab.decode(&ys);
     println!("decoded: {}", decoded);
-
-
 }

@@ -192,7 +192,7 @@ impl Loader {
         if let Some(order) = &self.order {
             for i in 0..self.batch_size {
                 let pos = order[self.pos + i];
-                let sample = self.data.slice(pos , pos + self.seq_len);
+                let sample = self.data.slice(pos, pos + self.seq_len);
                 let target = self.data.slice(pos + 1, pos + self.seq_len + 1);
                 samples.push(sample.to_vec());
                 targets.push(target.to_vec());
@@ -200,8 +200,8 @@ impl Loader {
         } else {
             for i in 0..self.batch_size {
                 let pos = self.pos + i;
-                let sample = self.data.slice(pos , pos + self.seq_len);
-                let target = self.data.slice(pos + 1 , pos + self.seq_len + 1 );
+                let sample = self.data.slice(pos, pos + self.seq_len);
+                let target = self.data.slice(pos + 1, pos + self.seq_len + 1);
                 samples.push(sample.to_vec());
                 targets.push(target.to_vec());
             }

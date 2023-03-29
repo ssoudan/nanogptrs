@@ -64,6 +64,8 @@ pub struct NanoGpt {
     n_embd: i64,
     /// The vocabulary size
     vocab_size: i64,
+    /// The sequence length
+    seq_len: i64,
 }
 
 impl NanoGpt {
@@ -87,26 +89,26 @@ impl NanoGpt {
             lm_head,
             n_embd,
             vocab_size,
+            seq_len,
         }
     }
 
     /// Forward pass
     pub fn forward(&self, xs: &Tensor) -> Tensor {
+        // FUTURE(ssoudan) we only need t here - we only support t = seq_len - could be made more static
         let (b, t) = xs.size2().unwrap();
 
         let tok_emb = xs.apply(&self.token_embedding); // [batch_size, seq_len, n_embd]
 
         let device = xs.device();
 
-        let pos = Tensor::arange(t, (tch::Kind::Int64, device)); // [seq_len=t]
+        let pos = Tensor::arange_start(0, t, (tch::Kind::Int64, device)); // [t]
 
-        let pos = pos.unsqueeze(0); // [1, seq_len=t]
+        let pos = pos.unsqueeze(0); // [1, t]
         assert_eq!(pos.size(), &[1, t]);
 
-        let pos = pos.repeat(&[b, 1, 1]);
-        assert_eq!(pos.size(), &[b, 1, t]);
-
-        let pos_emb = pos.apply(&self.position_embedding); // [seq_len, n_embd]
+        let pos_emb = pos.apply(&self.position_embedding);
+        let pos_emb = pos_emb.view([t, self.n_embd]); // [seq_len, n_embd]
         assert_eq!(pos_emb.size(), &[t, self.n_embd]);
 
         let x = tok_emb + pos_emb; // [batch_size, seq_len, n_embd]
@@ -120,6 +122,9 @@ impl NanoGpt {
 
 impl LMModel for NanoGpt {
     fn generate(&self, xs: Tensor, max_len: i64) -> Tensor {
+        let (_b, t) = xs.size2().unwrap();
+        assert_eq!(t, self.seq_len);
+
         let mut xs = xs;
         for _ in 0..max_len {
             // take the last logits
@@ -129,6 +134,13 @@ impl LMModel for NanoGpt {
             // sample the next token
             let next_token = probs.multinomial(1, true);
             xs = Tensor::cat(&[xs, next_token], 1);
+            // crop the sequence to the maximum length, starting from the end if needed
+            // FUTURE(ssoudan) better way?
+            let (_b, t) = xs.size2().unwrap();
+            if t > self.seq_len {
+                xs = xs.i((.., (t - self.seq_len)..));
+            }
+            assert_eq!(xs.size()[1], self.seq_len);
         }
         xs
     }

@@ -73,7 +73,7 @@ impl<'a> LossEstimator<'a> {
         let mut n_train_batches = 0;
         let mut n_valid_batches = 0;
 
-        progress_callback.train_loss_start(n_train_batches);
+        progress_callback.train_loss_start(train_iters);
 
         while let Some((xs, ys)) = self.train_dataloader.next_batch() {
             let logits = model.forward_t(&xs, false);
@@ -92,7 +92,7 @@ impl<'a> LossEstimator<'a> {
 
         progress_callback.train_loss_end(train_loss);
 
-        progress_callback.valid_loss_start(n_valid_batches);
+        progress_callback.valid_loss_start(eval_iters);
 
         while let Some((xs, ys)) = self.valid_dataloader.next_batch() {
             let logits = model.forward_t(&xs, false);

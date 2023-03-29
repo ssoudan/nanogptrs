@@ -147,7 +147,7 @@ fn main() {
 
     let vs = tch::nn::VarStore::new(device);
 
-    let model: Box<dyn LMModel> = match args.model.unwrap_or_else(|| Model::default()) {
+    let model: Box<dyn LMModel> = match args.model.unwrap_or_default() {
         Model::NanoGpt(NanoGptArgs { n_embd }) => Box::new(nanogptrs::model::NanoGpt::new(
             &vs.root(),
             vocab.size() as i64,
@@ -160,7 +160,7 @@ fn main() {
         )),
     };
 
-    let xs = Tensor::zeros(&[1, 1], (tch::Kind::Int64, device));
+    let xs = Tensor::zeros(&[1, seq_len as i64], (tch::Kind::Int64, device));
     let max_len = 100;
     let ys = model.generate(xs, max_len);
     println!("generated: {:?}", ys);

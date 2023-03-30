@@ -336,7 +336,6 @@ impl NanoGpt {
 
 impl nn::ModuleT for NanoGpt {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
-        // FUTURE(ssoudan) we only need t here - we only support t = block_size - could be made more static
         let (b, t) = xs.size2().unwrap();
 
         // tok_emb

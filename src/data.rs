@@ -184,6 +184,8 @@ impl Loader {
     }
 
     /// Pick a random order for the sequences to be picked to make the batches
+    /// Also reset the position in the order. This means that `n_batches()` batches are available
+    /// from here.
     pub fn shuffle<R: Rng>(&mut self, rng: &mut R) {
         let mut order: Vec<usize> = (0..self.n_samples).collect();
         order.shuffle(rng);

@@ -111,18 +111,28 @@ fn main() {
     let n_epochs = args.training_params.n_epochs;
     let lr = args.training_params.lr;
 
+    // print a banner with nanoGPTrs
+    println!(
+        r#"
+                                 ****   ****   *****                
+                                *    *  *   *    *                  
+                                *       *   *    *                  
+* ***    ****   * ***    ****   *       *   *    *    * **   ****   
+**   *       *  **   *  *    *  *       ****     *     *    *    *  
+*    *   *****  *    *  *    *  *  ***  *        *     *     **     
+*    *  *    *  *    *  *    *  *    *  *        *     *       **   
+*    *  *   **  *    *  *    *  *   **  *        *     *    *    *  
+*    *   *** *  *    *   ****    *** *  *        *     *     ****   
+"#
+    );
+
     // if not built in release mode, print a big warning
     #[cfg(debug_assertions)]
     {
         println!("WARNING: This is a debug build. It will be very slow.");
     }
 
-    println!("Hello, world!");
-
-    let t = Tensor::of_slice(&[3, 1, 4, 1, 5]).to(device);
-    let t = t * 2;
-    t.print();
-
+    // Load the data
     let data = load_file();
     println!("data.len(): {}", data.len());
 
@@ -133,17 +143,6 @@ fn main() {
     let vocab = Vocab::new(&data);
     println!("vocab.len(): {}", vocab.size());
     println!("vocab: {:?}", vocab.chars());
-
-    // encode the first 1000 characters
-    let encoded = vocab.encode(&data[0..1000]);
-    println!("encoded: {:?}", encoded);
-
-    // decode the first 1000 characters
-    let decoded = vocab.decode(&encoded);
-    println!("decoded: {}", decoded);
-
-    // check that the decoded string is the same as the original
-    assert_eq!(decoded, &data[0..1000]);
 
     // Split the data into training and validation sets
     let n = data.len() * 9 / 10;
@@ -176,10 +175,6 @@ fn main() {
     train_dataloader.shuffle(&mut rng);
     valid_dataloader.shuffle(&mut rng);
 
-    let (samples, targets) = train_dataloader.next_batch().unwrap();
-    println!("samples: {:?}", samples);
-    println!("targets: {:?}", targets);
-
     ///////
 
     let vs = tch::nn::VarStore::new(device);
@@ -203,15 +198,22 @@ fn main() {
         )),
     };
 
-    let xs = Tensor::zeros(&[1, block_size as i64], (tch::Kind::Int64, device));
+    let xs = Tensor::zeros(&[1, 1_i64], (tch::Kind::Int64, device));
     let max_len = 100;
     let ys = model.generate(xs, max_len);
-    println!("generated: {:?}", ys);
 
     // decode the generated sequence of tokens
     let ys: Vec<i64> = ys.into();
     let decoded = vocab.decode(&ys);
     println!("decoded: {}", decoded);
+
+    // number of parameters
+    let nb_params = vs
+        .trainable_variables()
+        .iter()
+        .map(|t| t.size().iter().product::<i64>())
+        .sum::<i64>();
+    println!("num parameters: {}", nb_params);
 
     // train the model
     let mut opt = tch::nn::Adam::default().build(&vs, lr).unwrap();
@@ -283,7 +285,6 @@ fn main() {
     let xs = Tensor::zeros(&[1, block_size as i64], (tch::Kind::Int64, device));
     let max_len = 1500;
     let ys = model.generate(xs, max_len);
-    println!("generated: {:?}", ys);
 
     // decode the generated sequence of tokens
     let ys: Vec<i64> = ys.into();

@@ -28,13 +28,13 @@ enum Device {
 #[derive(Parser, Debug, Clone, Copy)]
 struct NanoGptArgs {
     /// the size of the embedding to use
-    #[arg(short, long, default_value = "384")]
+    #[arg(short = 'E', long, default_value = "384")]
     n_embd: i64,
     /// Number of layers
-    #[arg(short, long, default_value = "6")]
+    #[arg(short = 'L', long, default_value = "6")]
     n_layer: i64,
     /// Number of heads
-    #[arg(short, long, default_value = "6")]
+    #[arg(short = 'H', long, default_value = "6")]
     n_head: i64,
 }
 

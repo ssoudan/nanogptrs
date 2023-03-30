@@ -216,6 +216,17 @@ fn main() {
     // train the model
     let mut opt = tch::nn::Adam::default().build(&vs, lr).unwrap();
 
+    // half precision training
+    // TODO(ssoudan) support half precision training
+    // vs.half();
+    // vs.trainable_variables().iter().for_each(|t| {
+    //     println!("t: {:?}", t);
+    // });
+    //
+    // vs.variables().iter().for_each(|t| {
+    //     println!("t: {:?}", t);
+    // });
+
     // Initialize the progress bars
     let mut pb_reporter = PbProgressReporter::default();
 

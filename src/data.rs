@@ -64,6 +64,7 @@ impl TokenizedData {
     pub fn new(data: &str, vocab: Vocab, device: Device) -> Self {
         let data = vocab.encode(data);
         let data = Tensor::of_slice(&data).to_device(device);
+
         Self { data, vocab }
     }
 

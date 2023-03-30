@@ -421,6 +421,9 @@ pub trait LMModel: nn::ModuleT {
 pub fn loss(logits: &Tensor, targets: &Tensor) -> Tensor {
     let (b, t, c) = logits.size3().unwrap();
 
+    let logits = logits.to_kind(tch::Kind::Float);
+    let targets = targets.to_kind(tch::Kind::Int64);
+
     logits
         .view([b * t, c])
         .cross_entropy_for_logits(&targets.view([b * t]))

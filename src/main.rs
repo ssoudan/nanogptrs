@@ -278,7 +278,7 @@ fn main() {
     pb_reporter.epoch_end();
 
     // generate some text
-    let xs = Tensor::zeros(&[1, seq_len as i64], (tch::Kind::Int64, tch::Device::Cpu));
+    let xs = Tensor::zeros(&[1, seq_len as i64], (tch::Kind::Int64, device));
     let max_len = 1500;
     let ys = model.generate(xs, max_len);
     println!("generated: {:?}", ys);

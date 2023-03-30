@@ -66,7 +66,7 @@ impl Head {
     ///
     /// # Arguments
     /// * `vs` - The path to the module.
-    /// * `seq_len` - The sequence length.
+    /// * `block_size` - The maximum sequence length.
     /// * `n_emb` - The embedding size.
     /// * `head_size` - The size of the head.
     ///
@@ -74,8 +74,13 @@ impl Head {
     /// A new Head.
     ///
     /// # Notes
-    /// The input of `forward` is expected to be of shape `[batch_size, seq_len, C]`.
-    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, seq_len: i64, n_emb: i64, head_size: i64) -> Self {
+    /// The input of `forward` is expected to be of shape `[batch_size, block_size, C]`.
+    pub fn new<'a, T: Borrow<Path<'a>>>(
+        vs: T,
+        block_size: i64,
+        n_emb: i64,
+        head_size: i64,
+    ) -> Self {
         let vs = vs.borrow();
 
         let device = vs.device();
@@ -83,7 +88,7 @@ impl Head {
         let key = nn::linear(vs / "key", n_emb, head_size, Default::default());
         let query = nn::linear(vs / "query", n_emb, head_size, Default::default());
         let value = nn::linear(vs / "value", n_emb, head_size, Default::default());
-        let mask = Tensor::ones(&[seq_len, seq_len], (tch::Kind::Float, device)).tril(0);
+        let mask = Tensor::ones(&[block_size, block_size], (tch::Kind::Float, device)).tril(0);
         Self {
             key,
             query,
@@ -111,7 +116,7 @@ impl nn::ModuleT for Head {
 
         // Attention scores
         let wei = q.matmul(&k.transpose(-2, -1)) / (d_k as f64).sqrt();
-        let wei = wei.masked_fill(&self.mask.eq(0.), f64::NEG_INFINITY);
+        let wei = wei.masked_fill(&self.mask.i((..t, ..t)).eq(0.), f64::NEG_INFINITY);
         assert_eq!(wei.size(), &[b, t, t]);
 
         let wei = wei.softmax(-1, tch::Kind::Float);
@@ -138,7 +143,7 @@ impl MultiHeadSelfAttention {
     /// Create a new MultiHeadSelfAttention.
     /// # Arguments
     /// * `vs` - The path to the module.
-    /// * `seq_len` - The sequence length.
+    /// * `block_size` - The maximum sequence length.
     /// * `n_emb` - The embedding size.
     /// * `head_size` - The size of the head.
     /// * `n_head` - The number of heads.
@@ -146,16 +151,16 @@ impl MultiHeadSelfAttention {
     /// A new MultiHeadSelfAttention.
     pub fn new<'a, T: Borrow<Path<'a>>>(
         vs: T,
-        seq_len: i64,
+        block_size: i64,
         n_emb: i64,
         head_size: i64,
         n_head: i64,
     ) -> Self {
-        // TODO(ssoudan) config to deal with n_head, head_size, n_emb, seq_len...
+        // TODO(ssoudan) config to deal with n_head, head_size, n_emb, block_size...
         let vs = vs.borrow();
 
         let heads = (0..n_head)
-            .map(|i| Head::new(vs / i, seq_len, n_emb, head_size))
+            .map(|i| Head::new(vs / i, block_size, n_emb, head_size))
             .collect();
 
         let projection = nn::linear(vs / "projection", n_emb, n_emb, Default::default());
@@ -224,7 +229,7 @@ impl Block {
     ///
     /// # Arguments
     /// * `vs` - The path to the module.
-    /// * `seq_len` - The sequence length.
+    /// * `block_size` - The maximum sequence length.
     /// * `n_emb` - The embedding size.
     /// * `n_head` - The number of heads.
     ///
@@ -233,7 +238,7 @@ impl Block {
     ///
     /// # Notes
     /// `n_emb` must be divisible by `n_head`.
-    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, seq_len: i64, n_emb: i64, n_head: i64) -> Self {
+    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, block_size: i64, n_emb: i64, n_head: i64) -> Self {
         let vs = vs.borrow();
 
         assert!(n_emb % n_head == 0, "n_emb must be divisible by n_head");
@@ -241,7 +246,7 @@ impl Block {
         let head_size = n_emb / n_head;
 
         let sa_heads =
-            MultiHeadSelfAttention::new(vs / "sa_heads", seq_len, n_emb, head_size, n_head);
+            MultiHeadSelfAttention::new(vs / "sa_heads", block_size, n_emb, head_size, n_head);
         let ffwd = FeedForward::new(vs / "ffwd", n_emb);
 
         let ln1 = nn::layer_norm(vs / "ln1", vec![n_emb], Default::default());
@@ -279,8 +284,8 @@ pub struct NanoGpt {
     n_embd: i64,
     /// The vocabulary size
     vocab_size: i64,
-    /// The sequence length
-    seq_len: i64,
+    /// The maximum sequence length
+    block_size: i64,
     /// Layers
     layers: SequentialT,
     /// Layer normalization
@@ -292,7 +297,7 @@ impl NanoGpt {
     pub fn new(
         vs: &nn::Path,
         vocab_size: i64,
-        seq_len: i64,
+        block_size: i64,
         n_embd: i64,
         n_head: i64,
         n_layer: i64,
@@ -302,14 +307,14 @@ impl NanoGpt {
 
         let position_embedding = nn::embedding(
             vs / "position_embedding",
-            seq_len,
+            block_size,
             n_embd,
             Default::default(),
         );
 
         let mut layers = nn::seq_t();
         for i in 0..n_layer {
-            layers = layers.add(Block::new(vs / i, seq_len, n_embd, n_head));
+            layers = layers.add(Block::new(vs / i, block_size, n_embd, n_head));
         }
 
         let lm_head = nn::linear(vs / "lm_head", n_embd, vocab_size, Default::default());
@@ -323,7 +328,7 @@ impl NanoGpt {
             layers,
             n_embd,
             vocab_size,
-            seq_len,
+            block_size,
             ln,
         }
     }
@@ -331,11 +336,11 @@ impl NanoGpt {
 
 impl nn::ModuleT for NanoGpt {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
-        // FUTURE(ssoudan) we only need t here - we only support t = seq_len - could be made more static
+        // FUTURE(ssoudan) we only need t here - we only support t = block_size - could be made more static
         let (b, t) = xs.size2().unwrap();
 
         // tok_emb
-        let tok_emb = xs.apply(&self.token_embedding); // [batch_size, seq_len, n_embd]
+        let tok_emb = xs.apply(&self.token_embedding); // [batch_size, block_size, n_embd]
 
         // pos_emb
         let device = xs.device();
@@ -344,21 +349,21 @@ impl nn::ModuleT for NanoGpt {
         assert_eq!(pos.size(), &[1, t]);
 
         let pos_emb = pos.apply(&self.position_embedding);
-        let pos_emb = pos_emb.view([t, self.n_embd]); // [seq_len, n_embd]
+        let pos_emb = pos_emb.view([t, self.n_embd]); // [block_size, n_embd]
         assert_eq!(pos_emb.size(), &[t, self.n_embd]);
 
         // residual connection
-        let x = tok_emb + pos_emb; // [batch_size, seq_len, n_embd]
+        let x = tok_emb + pos_emb; // [batch_size, block_size, n_embd]
         assert_eq!(x.size(), &[b, t, self.n_embd]);
 
         // layers
-        let x = x.apply_t(&self.layers, train); // [batch_size, seq_len, n_embd]
+        let x = x.apply_t(&self.layers, train); // [batch_size, block_size, n_embd]
 
         // layer norm
-        let x = x.apply_t(&self.ln, train); // [batch_size, seq_len, n_embd]
+        let x = x.apply_t(&self.ln, train); // [batch_size, block_size, n_embd]
 
         // lm head
-        let x = x.apply_t(&self.lm_head, train); // [batch_size, seq_len, vocab_size]
+        let x = x.apply_t(&self.lm_head, train); // [batch_size, block_size, vocab_size]
         assert_eq!(x.size(), &[b, t, self.vocab_size]);
         x
     }
@@ -366,8 +371,8 @@ impl nn::ModuleT for NanoGpt {
 
 impl LMModel for NanoGpt {
     fn generate(&self, xs: Tensor, max_len: i64) -> Tensor {
-        let (b, t) = xs.size2().unwrap();
-        assert_eq!(t, self.seq_len);
+        let (b, _t) = xs.size2().unwrap();
+        // assert_eq!(t, self.block_size);
 
         // Create a tensor of zeros to store the output
         let outputs = xs.new_zeros(&[b, max_len], (tch::Kind::Int64, xs.device()));
@@ -390,10 +395,10 @@ impl LMModel for NanoGpt {
             // crop the sequence to the maximum length, starting from the end if needed
             // FUTURE(ssoudan) better way?
             let (_b, t) = xs.size2().unwrap();
-            if t > self.seq_len {
-                xs = xs.i((.., (t - self.seq_len)..));
+            if t > self.block_size {
+                xs = xs.i((.., (t - self.block_size)..));
             }
-            assert_eq!(xs.size()[1], self.seq_len);
+            assert!(xs.size()[1] <= self.block_size);
         }
 
         outputs
@@ -405,7 +410,7 @@ pub trait LMModel: nn::ModuleT {
     /// Generate a sequence of tokens from a starting sequence of tokens
     /// and a maximum length.
     ///
-    /// xs: the starting sequence of tokens of shape [batch_size, seq_len]
+    /// xs: the starting sequence of tokens of shape [batch_size, block_size]
     /// max_len: the maximum length of the generated sequence
     /// return: the generated sequence of tokens of shape [batch_size, max_len]
     fn generate(&self, xs: Tensor, max_len: i64) -> Tensor;
@@ -422,47 +427,146 @@ pub fn loss(logits: &Tensor, targets: &Tensor) -> Tensor {
         .cross_entropy_for_logits(&targets.view([b * t]))
 }
 
-/// Test the BigramLanguageModel
-#[test]
-fn test_bigram_language_model() {
-    let vs = nn::VarStore::new(tch::Device::Cpu);
-    let vocab_size = 100;
-    let batch_size = 2;
-    let seq_len = 5;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let model = BigramLanguageModel::new(&vs.root(), vocab_size);
-    let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int64);
-    let xs = xs.view([batch_size, seq_len]);
-    println!("xs: {:?}", xs);
-    let (b, t) = xs.size2().unwrap();
-    assert_eq!(b, batch_size);
-    assert_eq!(t, seq_len);
+    /// Test the BigramLanguageModel
+    #[test]
+    fn test_bigram_language_model() {
+        let vs = nn::VarStore::new(tch::Device::Cpu);
+        let vocab_size = 100;
+        let batch_size = 2;
+        let block_size = 5;
 
-    let logits = model.forward(&xs);
-    assert_eq!(logits.size(), [batch_size, seq_len, vocab_size]);
+        let model = BigramLanguageModel::new(&vs.root(), vocab_size);
+        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int64);
+        let xs = xs.view([batch_size, block_size]);
+        println!("xs: {:?}", xs);
+        let (b, t) = xs.size2().unwrap();
+        assert_eq!(b, batch_size);
+        assert_eq!(t, block_size);
 
-    let loss = loss(&logits, &xs);
-    println!("loss: {:?}", loss);
-    // we expect the loss to be close to -ln(1/vocab_size) = 4.17
+        let logits = model.forward(&xs);
+        assert_eq!(logits.size(), [batch_size, block_size, vocab_size]);
 
-    // use 0 as start of sequence token - this is '\n' with our data and tokenizer.
-    let xs = Tensor::zeros(&[batch_size, 1], (tch::Kind::Int64, tch::Device::Cpu));
-    let max_len = 10;
-    let ys = model.generate(xs, max_len);
-    println!("generated: {:?}", ys);
+        let loss = loss(&logits, &xs);
+        println!("loss: {:?}", loss);
+        // we expect the loss to be close to -ln(1/vocab_size) = 4.17
 
-    // decode the generated sequence of tokens
-    let ys = ys.to_kind(tch::Kind::Int64);
+        // use 0 as start of sequence token - this is '\n' with our data and tokenizer.
+        let xs = Tensor::zeros(&[batch_size, 1], (tch::Kind::Int64, tch::Device::Cpu));
+        let max_len = 10;
+        let ys = model.generate(xs, max_len);
+        println!("generated: {:?}", ys);
 
-    println!("generated: {:?}", ys);
+        // decode the generated sequence of tokens
+        let ys = ys.to_kind(tch::Kind::Int64);
 
-    let first = ys.i((0, ..));
-    let first: Vec<i64> = first.into();
-    println!("first: {:?}", first);
+        println!("generated: {:?}", ys);
 
-    let second = ys.i((1, ..));
-    let second: Vec<i64> = second.into();
-    println!("second: {:?}", second);
+        let first = ys.i((0, ..));
+        let first: Vec<i64> = first.into();
+        println!("first: {:?}", first);
+
+        let second = ys.i((1, ..));
+        let second: Vec<i64> = second.into();
+        println!("second: {:?}", second);
+    }
+
+    /// Test the NanoGpt forward pass
+    #[test]
+    fn test_nano_gpt_forward() {
+        let vs = nn::VarStore::new(tch::Device::Cpu);
+        let vocab_size = 100;
+        let batch_size = 2;
+        let block_size = 5;
+        let n_embd = 32;
+        let n_head = 4;
+        let n_layer = 2;
+
+        let model = NanoGpt::new(&vs.root(), vocab_size, block_size, n_embd, n_head, n_layer);
+        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int64);
+        let xs = xs.view([batch_size, block_size]);
+        println!("xs: {:?}", xs);
+        let (b, t) = xs.size2().unwrap();
+        assert_eq!(b, batch_size);
+        assert_eq!(t, block_size);
+
+        let logits = model.forward_t(&xs, false);
+        assert_eq!(logits.size(), [batch_size, block_size, vocab_size]);
+
+        let _loss = loss(&logits, &xs);
+    }
+
+    /// Test the NanoGpt forward pass with a sequence shorter than the maximum length (block_size)
+    #[test]
+    fn test_nano_gpt_forward_shorter_sequence() {
+        let vs = nn::VarStore::new(tch::Device::Cpu);
+        let vocab_size = 100;
+        let batch_size = 2;
+        let block_size = 5;
+        let n_embd = 32;
+        let n_head = 4;
+        let n_layer = 2;
+
+        let model = NanoGpt::new(&vs.root(), vocab_size, block_size, n_embd, n_head, n_layer);
+        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5]).to_kind(tch::Kind::Int64);
+        let xs = xs.view([batch_size, block_size - 2]);
+        println!("xs: {:?}", xs);
+        let (b, t) = xs.size2().unwrap();
+        assert_eq!(b, batch_size);
+        assert_eq!(t, block_size - 2);
+
+        let logits = model.forward_t(&xs, false);
+        assert_eq!(logits.size(), [batch_size, block_size - 2, vocab_size]);
+
+        let _loss = loss(&logits, &xs);
+    }
+
+    #[test]
+    fn test_nano_gpt_generate() {
+        let vs = nn::VarStore::new(tch::Device::Cpu);
+        let vocab_size = 100;
+        let batch_size = 2;
+        let block_size = 5;
+        let n_embd = 32;
+        let n_head = 4;
+        let n_layer = 2;
+
+        let model = NanoGpt::new(&vs.root(), vocab_size, block_size, n_embd, n_head, n_layer);
+        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int64);
+        let xs = xs.view([batch_size, block_size]);
+        println!("xs: {:?}", xs);
+        let (b, t) = xs.size2().unwrap();
+        assert_eq!(b, batch_size);
+        assert_eq!(t, block_size);
+
+        let logits = model.forward_t(&xs, false);
+        assert_eq!(logits.size(), [batch_size, block_size, vocab_size]);
+
+        let loss = loss(&logits, &xs);
+        println!("loss: {:?}", loss);
+        // we expect the loss to be close to -ln(1/vocab_size) = 4.17
+
+        // use 0 as start of sequence token - this is '\n' with our data and tokenizer.
+        let xs = Tensor::zeros(&[batch_size, 1], (tch::Kind::Int64, tch::Device::Cpu));
+        println!("xs: {:?}", xs);
+        let max_len = 10;
+        let ys = model.generate(xs, max_len);
+        println!("generated: {:?}", ys);
+
+        // decode the generated sequence of tokens
+        let ys = ys.to_kind(tch::Kind::Int64);
+
+        println!("generated: {:?}", ys);
+
+        let first = ys.i((0, ..));
+        let first: Vec<i64> = first.into();
+        println!("first: {:?}", first);
+
+        let second = ys.i((1, ..));
+        let second: Vec<i64> = second.into();
+        println!("second: {:?}", second);
+    }
 }
-
-// TODO(ssoudan): test the LanguageModel

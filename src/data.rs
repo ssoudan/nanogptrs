@@ -89,20 +89,20 @@ impl TokenizedData {
 
 /// A batch of data
 /// The first element is the input and the second element is the target.
-/// The input is a tensor of size `batch_size x seq_len`.
-/// The target is a tensor of size `batch_size x seq_len`.
+/// The input is a tensor of size `batch_size x block_size`.
+/// The target is a tensor of size `batch_size x block_size`.
 type Batch = (Tensor, Tensor);
 
 /// Dataloader for tokenized data
 /// Samples are tuples of the form (sample, target).
-/// The sample is a tensor of size `batch_size x seq_len`.
-/// The target is a tensor of size `batch_size x seq_len`.
+/// The sample is a tensor of size `batch_size x block_size`.
+/// The target is a tensor of size `batch_size x block_size`.
 ///
 /// Targets are the next token in the sequence.
 ///
 /// Batches are made of `batch_size` random samples.
 ///
-/// For example, if data is [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12], `seq_len` is 3 and `batch_size` is 2,
+/// For example, if data is [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12], `block_size` is 3 and `batch_size` is 2,
 /// the data loader could return the following batches:
 /// - batch 1: (tensor([[0, 1, 2], [3, 4, 5]]), tensor([[1, 2, 3], [4, 5, 6]]))
 /// - batch 2: (tensor([[6, 7, 8], [9, 10, 11]]), tensor([[7, 8, 9], [10, 11, 12]]))
@@ -110,10 +110,10 @@ type Batch = (Tensor, Tensor);
 pub struct Loader {
     data: TokenizedData,
     batch_size: usize,
-    seq_len: usize,
+    block_size: usize,
     /// The number of (complete) batches
     n_batches: usize,
-    /// The number of unique sequences of length `seq_len` in the data
+    /// The number of unique sequences of length `block_size` in the data
     n_samples: usize,
     /// The order of the batches
     order: Option<Vec<usize>>,
@@ -125,10 +125,10 @@ pub struct Loader {
 
 impl Loader {
     /// Create a new data loader from a string and a vocabulary
-    pub fn new(data: &str, seq_len: usize, batch_size: usize, device: Device) -> Self {
+    pub fn new(data: &str, block_size: usize, batch_size: usize, device: Device) -> Self {
         let tokenized_data = TokenizedData::new(data, Vocab::new(data));
-        // The number of unique sequences of length `seq_len+1` in the data
-        let n_samples = tokenized_data.len() - seq_len;
+        // The number of unique sequences of length `block_size+1` in the data
+        let n_samples = tokenized_data.len() - block_size;
         // The number of (complete) batches
         let n_batches = n_samples / batch_size;
 
@@ -137,7 +137,7 @@ impl Loader {
             batch_size,
             n_samples,
             n_batches,
-            seq_len,
+            block_size,
             device,
             order: None,
             pos: 0,
@@ -147,12 +147,12 @@ impl Loader {
     /// Create a new data loader from tokenized data
     pub fn from_tokenized_data(
         data: TokenizedData,
-        seq_len: usize,
+        block_size: usize,
         batch_size: usize,
         device: Device,
     ) -> Self {
-        // The number of unique sequences of length `seq_len+1` in the data
-        let n_samples = data.len() - seq_len;
+        // The number of unique sequences of length `block_size+1` in the data
+        let n_samples = data.len() - block_size;
         // The number of (complete) batches
         let n_batches = n_samples / batch_size;
 
@@ -161,7 +161,7 @@ impl Loader {
             batch_size,
             n_samples,
             n_batches,
-            seq_len,
+            block_size,
             order: None,
             pos: 0,
             device,
@@ -206,16 +206,16 @@ impl Loader {
         if let Some(order) = &self.order {
             for i in 0..self.batch_size {
                 let pos = order[self.pos + i];
-                let sample = self.data.slice(pos, pos + self.seq_len);
-                let target = self.data.slice(pos + 1, pos + self.seq_len + 1);
+                let sample = self.data.slice(pos, pos + self.block_size);
+                let target = self.data.slice(pos + 1, pos + self.block_size + 1);
                 samples.push(sample.to_vec());
                 targets.push(target.to_vec());
             }
         } else {
             for i in 0..self.batch_size {
                 let pos = self.pos + i;
-                let sample = self.data.slice(pos, pos + self.seq_len);
-                let target = self.data.slice(pos + 1, pos + self.seq_len + 1);
+                let sample = self.data.slice(pos, pos + self.block_size);
+                let target = self.data.slice(pos + 1, pos + self.block_size + 1);
                 samples.push(sample.to_vec());
                 targets.push(target.to_vec());
             }
@@ -228,10 +228,10 @@ impl Loader {
 
         let samples = Tensor::of_slice(&samples)
             .to(self.device)
-            .reshape(&[self.batch_size as i64, self.seq_len as i64]);
+            .reshape(&[self.batch_size as i64, self.block_size as i64]);
         let targets = Tensor::of_slice(&targets)
             .to(self.device)
-            .reshape(&[self.batch_size as i64, self.seq_len as i64]);
+            .reshape(&[self.batch_size as i64, self.block_size as i64]);
 
         Some((samples, targets))
     }
@@ -260,9 +260,9 @@ mod tests {
         // batch 2: (tensor([[2, 3, 4], [3, 4, 5]]), tensor([[3, 4, 5], [4, 5, 6]]))
 
         let data = "abcdefg";
-        let seq_len = 3;
+        let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, seq_len, batch_size, Device::Cpu);
+        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu);
 
         assert_eq!(loader.n_samples(), 4);
         assert_eq!(loader.n_batches(), 2);
@@ -287,9 +287,9 @@ mod tests {
         // with a leftover sample: (tensor([[2, 3, 4]]), tensor([[3, 4, 5]]))
 
         let data = "abcdef";
-        let seq_len = 3;
+        let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, seq_len, batch_size, Device::Cpu);
+        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu);
 
         assert_eq!(loader.n_samples(), 3);
         assert_eq!(loader.n_batches(), 1);
@@ -311,9 +311,9 @@ mod tests {
         // batch 2: (tensor([[2, 3, 4], [3, 4, 5]]), tensor([[3, 4, 5], [4, 5, 6]]))
 
         let data = "abcdefg";
-        let seq_len = 3;
+        let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, seq_len, batch_size, Device::Cpu);
+        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu);
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(123);
 
         loader.shuffle(&mut rng);

@@ -62,9 +62,9 @@ struct TrainingParameters {
     // #[arg(short, long, default_value = "32")]
     #[arg(short, long, default_value = "64")]
     batch_size: usize,
-    /// Sequence length
+    /// Maximum sequence length
     #[arg(short, long, default_value = "256")]
-    seq_len: usize,
+    block_size: usize,
 }
 
 /// The model to use.
@@ -106,7 +106,7 @@ fn main() {
         Device::Cuda => tch::Device::cuda_if_available(),
         Device::Mps => tch::Device::Mps,
     };
-    let seq_len = args.training_params.seq_len;
+    let block_size = args.training_params.block_size;
     let batch_size = args.training_params.batch_size;
     let n_epochs = args.training_params.n_epochs;
     let lr = args.training_params.lr;
@@ -156,8 +156,10 @@ fn main() {
     let train_data = TokenizedData::new(train_data, vocab.clone());
     let valid_data = TokenizedData::new(valid_data, vocab.clone());
 
-    let mut train_dataloader = Loader::from_tokenized_data(train_data, seq_len, batch_size, device);
-    let mut valid_dataloader = Loader::from_tokenized_data(valid_data, seq_len, batch_size, device);
+    let mut train_dataloader =
+        Loader::from_tokenized_data(train_data, block_size, batch_size, device);
+    let mut valid_dataloader =
+        Loader::from_tokenized_data(valid_data, block_size, batch_size, device);
 
     println!(
         "train_dataloader.n_batches(): {}",
@@ -190,7 +192,7 @@ fn main() {
         }) => Box::new(nanogptrs::model::NanoGpt::new(
             &vs.root(),
             vocab.size() as i64,
-            seq_len as i64,
+            block_size as i64,
             n_embd,
             n_head,
             n_layer,
@@ -201,7 +203,7 @@ fn main() {
         )),
     };
 
-    let xs = Tensor::zeros(&[1, seq_len as i64], (tch::Kind::Int64, device));
+    let xs = Tensor::zeros(&[1, block_size as i64], (tch::Kind::Int64, device));
     let max_len = 100;
     let ys = model.generate(xs, max_len);
     println!("generated: {:?}", ys);
@@ -231,11 +233,11 @@ fn main() {
             // let xs = Tensor::of_slice(&xs)
             //     .to_kind(tch::Kind::Int64)
             //     .to(device)
-            //     .view([batch_size as i64, seq_len as i64]);
+            //     .view([batch_size as i64, block_size as i64]);
             // let ys = Tensor::of_slice(&ys)
             //     .to_kind(tch::Kind::Int64)
             //     .to(device)
-            //     .view([batch_size as i64, seq_len as i64]);
+            //     .view([batch_size as i64, block_size as i64]);
 
             let logits = model.forward_t(&xs, true);
 
@@ -278,7 +280,7 @@ fn main() {
     pb_reporter.epoch_end();
 
     // generate some text
-    let xs = Tensor::zeros(&[1, seq_len as i64], (tch::Kind::Int64, device));
+    let xs = Tensor::zeros(&[1, block_size as i64], (tch::Kind::Int64, device));
     let max_len = 1500;
     let ys = model.generate(xs, max_len);
     println!("generated: {:?}", ys);

@@ -268,8 +268,7 @@ fn main() {
 
         pb_reporter.train_end();
 
-        // loss estimation
-        pb_reporter.estimate_start();
+        // loss estimation pb_reporter.estimate_start();
 
         // Reshuffle the batches
         train_dataloader.shuffle(&mut rng);

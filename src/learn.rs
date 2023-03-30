@@ -1,8 +1,11 @@
 use crate::estimate;
 use crate::estimate::LossEstimates;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressState, ProgressStyle};
+use std::fmt::Write;
 
 /// Progress reporter that uses the `indicatif` crate to display progress bars.
+///
+/// We want progress bar like: ```[198/200 35:16 < 00:21, 0.09/s]```
 pub struct PbProgressReporter {
     mb: MultiProgress,
     epoch_bar: Option<ProgressBar>,
@@ -37,8 +40,12 @@ impl ProgressReporter for PbProgressReporter {
         let epoch_bar = self.mb.add(ProgressBar::new(n_epochs as u64));
         epoch_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} MASTER   [{elapsed_precise}] {bar:40.cyan/blue} Epoch {pos:>7}/{len:7} {msg}")
-                .unwrap().progress_chars("##-"),
+                .template("{spinner:.green} MASTER   {bar:40.cyan/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .unwrap()
+                .with_key("per_sec_short", 
+                          |state: &ProgressState, w: &mut dyn Write|
+                              write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                .progress_chars("##-"),
         );
         epoch_bar.tick();
         self.epoch_bar = Some(epoch_bar);
@@ -60,9 +67,13 @@ impl ProgressReporter for PbProgressReporter {
         let train_bar = self.mb.add(ProgressBar::new(n_train_batches as u64));
         train_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} TRAINING [{elapsed_precise}] {bar:20.green/blue} {pos:>7}/{len:7} {per_sec:.2} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
+
+                .template("{spinner:.green} TRAINING {bar:40.green/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .unwrap()
+                .with_key("per_sec_short", 
+                                   |state: &ProgressState, w: &mut dyn Write|
+                                       write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                .progress_chars("##-"));
         train_bar.set_message(format!("Epoch {}", self.current_epoch));
         self.train_bar = Some(train_bar);
     }
@@ -81,9 +92,11 @@ impl ProgressReporter for PbProgressReporter {
         let estimate_bar = self.mb.add(ProgressBar::new(2));
         estimate_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} EVAL     [{elapsed_precise}] {bar:20.magenta/blue} {pos:>7}/{len:7} {per_sec:.2} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
+                .template("{spinner:.green} EVAL     {bar:40.magenta/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .unwrap().with_key("per_sec_short",
+                                   |state: &ProgressState, w: &mut dyn Write|
+                                       write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                .progress_chars("##-"));
         estimate_bar.set_message(format!("Estimating epoch {}", self.current_epoch));
         self.estimate_bar = Some(estimate_bar);
     }
@@ -133,9 +146,11 @@ impl estimate::ProgressReporter for PbProgressReporter {
         let train_loss_bar = self.mb.add(ProgressBar::new(total_train_batches as u64));
         train_loss_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green}        T [{elapsed_precise}] {bar:20.yellow/blue} {pos:>7}/{len:7} {per_sec:.2} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
+                .template("{spinner:.green}        T {bar:40.yellow/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .unwrap().with_key("per_sec_short",
+                                   |state: &ProgressState, w: &mut dyn Write|
+                                       write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                .progress_chars("##-"));
 
         if let Some(estimate_bar) = &self.estimate_bar {
             estimate_bar.set_message("Train loss estimation");
@@ -172,9 +187,11 @@ impl estimate::ProgressReporter for PbProgressReporter {
         let valid_loss_bar = self.mb.add(ProgressBar::new(total_valid_batches as u64));
         valid_loss_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green}        E [{elapsed_precise}] {bar:20.yellow/blue} {pos:>7}/{len:7} {per_sec:.2} {msg}")
-                .unwrap().progress_chars("##-"),
-        );
+                .template("{spinner:.green}        E {bar:40.yellow/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .unwrap().with_key("per_sec_short",
+                                   |state: &ProgressState, w: &mut dyn Write|
+                                       write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                .progress_chars("##-"));
         self.estimate_valid_bar = Some(valid_loss_bar);
     }
 

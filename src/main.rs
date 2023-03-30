@@ -10,6 +10,7 @@ use tch::Tensor;
 
 // TODO(ssoudan): Tensorboard?
 // TODO(ssoudan): FP precision
+// TODO(ssoudan): Count the number of parameters
 
 /// Torch device to use.
 #[derive(ValueEnum, Debug, Clone, Copy, Default)]
@@ -27,13 +28,23 @@ enum Device {
 #[derive(Parser, Debug, Clone, Copy)]
 struct NanoGptArgs {
     /// the size of the embedding to use
-    #[arg(short, long, default_value = "32")]
+    #[arg(short, long, default_value = "384")]
     n_embd: i64,
+    /// Number of layers
+    #[arg(short, long, default_value = "6")]
+    n_layer: i64,
+    /// Number of heads
+    #[arg(short, long, default_value = "6")]
+    n_head: i64,
 }
 
 impl Default for NanoGptArgs {
     fn default() -> Self {
-        Self { n_embd: 32 }
+        Self {
+            n_embd: 384,
+            n_layer: 6,
+            n_head: 6,
+        }
     }
 }
 
@@ -41,16 +52,18 @@ impl Default for NanoGptArgs {
 #[derive(Parser, Debug, Clone, Copy)]
 struct TrainingParameters {
     /// Learning rate
-    #[arg(short, long, default_value = "0.001")]
+    // #[arg(short, long, default_value = "0.001")]
+    #[arg(short, long, default_value = "0.0003")]
     lr: f64,
     /// Number of epochs
-    #[arg(short, long, default_value = "3")]
+    #[arg(short, long, default_value = "1")]
     n_epochs: usize,
     /// Batch size
-    #[arg(short, long, default_value = "32")]
+    // #[arg(short, long, default_value = "32")]
+    #[arg(short, long, default_value = "64")]
     batch_size: usize,
     /// Sequence length
-    #[arg(short, long, default_value = "8")]
+    #[arg(short, long, default_value = "256")]
     seq_len: usize,
 }
 
@@ -170,11 +183,17 @@ fn main() {
     let vs = tch::nn::VarStore::new(device);
 
     let model: Box<dyn LMModel> = match args.model.unwrap_or_default() {
-        Model::NanoGpt(NanoGptArgs { n_embd }) => Box::new(nanogptrs::model::NanoGpt::new(
+        Model::NanoGpt(NanoGptArgs {
+            n_embd,
+            n_layer,
+            n_head,
+        }) => Box::new(nanogptrs::model::NanoGpt::new(
             &vs.root(),
             vocab.size() as i64,
             seq_len as i64,
             n_embd,
+            n_head,
+            n_layer,
         )),
         Model::BigramLanguageModel => Box::new(nanogptrs::model::BigramLanguageModel::new(
             &vs.root(),
@@ -229,7 +248,7 @@ fn main() {
 
             train_n += 1;
 
-            if train_n % 1000 == 0 {
+            if train_n % 10 == 0 {
                 pb_reporter.train_progress(train_n);
             }
         }

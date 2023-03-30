@@ -17,3 +17,13 @@ clap = { version = "4.2.0", features = ["derive"] }
 
 [dev-dependencies]
 rand_chacha = "0.3.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+debug = false
+debug-assertions = false
+codegen-units = 1
+panic = "abort"
+overflow-checks = true
+incremental = false

@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 use tch::nn;
-use tch::nn::{ModuleT, Path};
+use tch::nn::{ModuleT, Path, SequentialT};
 use tch::IndexOp;
 use tch::Tensor;
 
@@ -95,7 +95,7 @@ impl Head {
 }
 
 impl nn::ModuleT for Head {
-    fn forward_t(&self, xs: &Tensor, _train: bool) -> Tensor {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let (b, t, _c) = xs.size3().unwrap();
         let head_size = self.head_size;
 
@@ -109,12 +109,15 @@ impl nn::ModuleT for Head {
         let v = xs.apply(&self.value); // [b, t, head_size]
         assert_eq!(v.size(), &[b, t, head_size]);
 
+        // Attention scores
         let wei = q.matmul(&k.transpose(-2, -1)) / (d_k as f64).sqrt();
         let wei = wei.masked_fill(&self.mask.eq(0.), f64::NEG_INFINITY);
         assert_eq!(wei.size(), &[b, t, t]);
 
         let wei = wei.softmax(-1, tch::Kind::Float);
         assert_eq!(wei.size(), &[b, t, t]);
+
+        let wei = wei.dropout(0.2, train);
 
         // weighted aggregation of the values
         let out = wei.matmul(&v); // [b, t, head_size]
@@ -128,6 +131,7 @@ impl nn::ModuleT for Head {
 #[derive(Debug)]
 pub struct MultiHeadSelfAttention {
     heads: Vec<Head>,
+    projection: nn::Linear,
 }
 
 impl MultiHeadSelfAttention {
@@ -147,13 +151,16 @@ impl MultiHeadSelfAttention {
         head_size: i64,
         n_head: i64,
     ) -> Self {
+        // TODO(ssoudan) config to deal with n_head, head_size, n_emb, seq_len...
         let vs = vs.borrow();
 
         let heads = (0..n_head)
             .map(|i| Head::new(vs / i, seq_len, n_emb, head_size))
             .collect();
 
-        Self { heads }
+        let projection = nn::linear(vs / "projection", n_emb, n_emb, Default::default());
+
+        Self { heads, projection }
     }
 }
 
@@ -166,7 +173,9 @@ impl nn::ModuleT for MultiHeadSelfAttention {
             .map(|h| h.forward_t(xs, train))
             .collect::<Vec<_>>();
 
-        Tensor::cat(&heads, -1)
+        let out = Tensor::cat(&heads, -1);
+
+        out.apply(&self.projection).dropout(0.2, train)
     }
 }
 
@@ -174,14 +183,86 @@ impl nn::ModuleT for MultiHeadSelfAttention {
 #[derive(Debug)]
 struct FeedForward {
     net: nn::Linear,
+    projection: nn::Linear,
+    // TODO(ssoudan) use nn.Sequential
 }
 
 impl FeedForward {
     /// Create a new FeedForward
     pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, n_embd: i64) -> Self {
         let vs = vs.borrow();
-        let net = nn::linear(vs / "net", n_embd, n_embd, Default::default());
-        Self { net }
+        let net = nn::linear(vs / "net", n_embd, 4 * n_embd, Default::default());
+        let projection = nn::linear(vs / "projection", 4 * n_embd, n_embd, Default::default());
+        Self { net, projection }
+    }
+}
+
+impl nn::ModuleT for FeedForward {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        xs.apply(&self.net)
+            .relu()
+            .apply(&self.projection)
+            .dropout(0.2, train)
+    }
+}
+
+/// A Block is a transformer decoder block.
+#[derive(Debug)]
+struct Block {
+    /// SA heads
+    sa_heads: MultiHeadSelfAttention,
+    /// Feed forward layer
+    ffwd: FeedForward,
+    /// Layer normalization
+    ln1: nn::LayerNorm,
+    /// Layer normalization
+    ln2: nn::LayerNorm,
+}
+
+impl Block {
+    /// Create a new Block.
+    ///
+    /// # Arguments
+    /// * `vs` - The path to the module.
+    /// * `seq_len` - The sequence length.
+    /// * `n_emb` - The embedding size.
+    /// * `n_head` - The number of heads.
+    ///
+    /// # Returns
+    /// A new Block.
+    ///
+    /// # Notes
+    /// `n_emb` must be divisible by `n_head`.
+    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, seq_len: i64, n_emb: i64, n_head: i64) -> Self {
+        let vs = vs.borrow();
+
+        assert!(n_emb % n_head == 0, "n_emb must be divisible by n_head");
+
+        let head_size = n_emb / n_head;
+
+        let sa_heads =
+            MultiHeadSelfAttention::new(vs / "sa_heads", seq_len, n_emb, head_size, n_head);
+        let ffwd = FeedForward::new(vs / "ffwd", n_emb);
+
+        let ln1 = nn::layer_norm(vs / "ln1", vec![n_emb], Default::default());
+        let ln2 = nn::layer_norm(vs / "ln2", vec![n_emb], Default::default());
+
+        Self {
+            sa_heads,
+            ffwd,
+            ln1,
+            ln2,
+        }
+    }
+}
+
+impl nn::ModuleT for Block {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        // SA heads with residual connection
+        let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train); // [b, t, n_emb]
+
+        // Feed forward layer with residual connection
+        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.ffwd, train) // [b, t, n_emb]
     }
 }
 
@@ -194,21 +275,28 @@ pub struct NanoGpt {
     pub position_embedding: nn::Embedding,
     /// LM head
     lm_head: nn::Linear,
-    /// SA heads
-    sa_heads: MultiHeadSelfAttention,
-    /// Feed forward layer
-    ffwd: FeedForward,
     /// The embedding size
     n_embd: i64,
     /// The vocabulary size
     vocab_size: i64,
     /// The sequence length
     seq_len: i64,
+    /// Layers
+    layers: SequentialT,
+    /// Layer normalization
+    ln: nn::LayerNorm,
 }
 
 impl NanoGpt {
     /// Create a new NanoGpt
-    pub fn new(vs: &nn::Path, vocab_size: i64, seq_len: i64, n_embd: i64) -> Self {
+    pub fn new(
+        vs: &nn::Path,
+        vocab_size: i64,
+        seq_len: i64,
+        n_embd: i64,
+        n_head: i64,
+        n_layer: i64,
+    ) -> Self {
         let token_embedding =
             nn::embedding(vs / "embedding", vocab_size, n_embd, Default::default());
 
@@ -219,31 +307,25 @@ impl NanoGpt {
             Default::default(),
         );
 
-        // let sa_heads = Head::new(vs / "sa_head", seq_len, n_embd);
-        assert!(n_embd % 4 == 0, "n_embd must be a multiple of 4");
-        let head_size = n_embd / 4;
-        let sa_heads = MultiHeadSelfAttention::new(vs / "sa_heads", seq_len, n_embd, head_size, 4);
-
-        let ffwd = FeedForward::new(vs / "ffwd", n_embd);
+        let mut layers = nn::seq_t();
+        for i in 0..n_layer {
+            layers = layers.add(Block::new(vs / i, seq_len, n_embd, n_head));
+        }
 
         let lm_head = nn::linear(vs / "lm_head", n_embd, vocab_size, Default::default());
+
+        let ln = nn::layer_norm(vs / "ln", vec![n_embd], Default::default());
 
         Self {
             token_embedding,
             position_embedding,
             lm_head,
-            sa_heads,
-            ffwd,
+            layers,
             n_embd,
             vocab_size,
             seq_len,
+            ln,
         }
-    }
-}
-
-impl nn::ModuleT for FeedForward {
-    fn forward_t(&self, xs: &Tensor, _train: bool) -> Tensor {
-        xs.apply(&self.net).relu()
     }
 }
 
@@ -269,13 +351,11 @@ impl nn::ModuleT for NanoGpt {
         let x = tok_emb + pos_emb; // [batch_size, seq_len, n_embd]
         assert_eq!(x.size(), &[b, t, self.n_embd]);
 
-        // sa heads
-        let x = x.apply_t(&self.sa_heads, train); // [batch_size, seq_len, n_embd]
-        assert_eq!(x.size(), &[b, t, self.n_embd]);
+        // layers
+        let x = x.apply_t(&self.layers, train); // [batch_size, seq_len, n_embd]
 
-        // ffwd
-        let x = x.apply_t(&self.ffwd, train); // [batch_size, seq_len, n_embd]
-        assert_eq!(x.size(), &[b, t, self.n_embd]);
+        // layer norm
+        let x = x.apply_t(&self.ln, train); // [batch_size, seq_len, n_embd]
 
         // lm head
         let x = x.apply_t(&self.lm_head, train); // [batch_size, seq_len, vocab_size]
@@ -286,18 +366,27 @@ impl nn::ModuleT for NanoGpt {
 
 impl LMModel for NanoGpt {
     fn generate(&self, xs: Tensor, max_len: i64) -> Tensor {
-        let (_b, t) = xs.size2().unwrap();
+        let (b, t) = xs.size2().unwrap();
         assert_eq!(t, self.seq_len);
 
+        // Create a tensor of zeros to store the output
+        let outputs = xs.new_zeros(&[b, max_len], (tch::Kind::Int64, xs.device()));
+
         let mut xs = xs;
-        for _ in 0..max_len {
+        for i in 0..max_len {
             // take the last logits
             let logits = self.forward_t(&xs, false).i((.., -1, ..));
             //  apply softmax to get the probabilities of the next token
             let probs = logits.softmax(-1, tch::Kind::Float);
             // sample the next token
             let next_token = probs.multinomial(1, true);
+
+            // add the next token to the output
+            outputs.narrow(1, i, 1).copy_(&next_token);
+
+            // update xs
             xs = Tensor::cat(&[xs, next_token], 1);
+
             // crop the sequence to the maximum length, starting from the end if needed
             // FUTURE(ssoudan) better way?
             let (_b, t) = xs.size2().unwrap();
@@ -306,7 +395,8 @@ impl LMModel for NanoGpt {
             }
             assert_eq!(xs.size()[1], self.seq_len);
         }
-        xs
+
+        outputs
     }
 }
 

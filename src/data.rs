@@ -55,14 +55,15 @@ impl Vocab {
 
 /// Tokenized data
 pub struct TokenizedData {
-    data: Vec<i64>, // TODO(ssoudan) use a tensor here
+    data: Tensor,
     vocab: Vocab,
 }
 
 impl TokenizedData {
     /// Create a new tokenized data from a string and a vocabulary
-    pub fn new(data: &str, vocab: Vocab) -> Self {
+    pub fn new(data: &str, vocab: Vocab, device: Device) -> Self {
         let data = vocab.encode(data);
+        let data = Tensor::of_slice(&data).to_device(device);
         Self { data, vocab }
     }
 
@@ -73,17 +74,17 @@ impl TokenizedData {
 
     /// Return the number of tokens
     pub fn len(&self) -> usize {
-        self.data.len()
+        self.data.size1().unwrap() as usize
     }
 
     /// True if the data is empty
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.data.size1().unwrap() == 0
     }
 
     /// Return a slice of the data
-    pub fn slice(&self, start: usize, end: usize) -> &[i64] {
-        &self.data[start..end]
+    pub fn slice(&self, start: usize, end: usize) -> Tensor {
+        self.data.slice(0, start as i64, end as i64, 1)
     }
 }
 
@@ -119,14 +120,12 @@ pub struct Loader {
     order: Option<Vec<usize>>,
     /// The current position in the order
     pos: usize,
-    /// The device on which the tensors are created
-    device: Device,
 }
 
 impl Loader {
     /// Create a new data loader from a string and a vocabulary
     pub fn new(data: &str, block_size: usize, batch_size: usize, device: Device) -> Self {
-        let tokenized_data = TokenizedData::new(data, Vocab::new(data));
+        let tokenized_data = TokenizedData::new(data, Vocab::new(data), device);
         // The number of unique sequences of length `block_size+1` in the data
         let n_samples = tokenized_data.len() - block_size;
         // The number of (complete) batches
@@ -138,19 +137,13 @@ impl Loader {
             n_samples,
             n_batches,
             block_size,
-            device,
             order: None,
             pos: 0,
         }
     }
 
     /// Create a new data loader from tokenized data
-    pub fn from_tokenized_data(
-        data: TokenizedData,
-        block_size: usize,
-        batch_size: usize,
-        device: Device,
-    ) -> Self {
+    pub fn from_tokenized_data(data: TokenizedData, block_size: usize, batch_size: usize) -> Self {
         // The number of unique sequences of length `block_size+1` in the data
         let n_samples = data.len() - block_size;
         // The number of (complete) batches
@@ -164,7 +157,6 @@ impl Loader {
             block_size,
             order: None,
             pos: 0,
-            device,
         }
     }
 
@@ -210,30 +202,23 @@ impl Loader {
                 let pos = order[self.pos + i];
                 let sample = self.data.slice(pos, pos + self.block_size);
                 let target = self.data.slice(pos + 1, pos + self.block_size + 1);
-                samples.push(sample.to_vec());
-                targets.push(target.to_vec());
+                samples.push(sample);
+                targets.push(target);
             }
         } else {
             for i in 0..self.batch_size {
                 let pos = self.pos + i;
                 let sample = self.data.slice(pos, pos + self.block_size);
                 let target = self.data.slice(pos + 1, pos + self.block_size + 1);
-                samples.push(sample.to_vec());
-                targets.push(target.to_vec());
+                samples.push(sample);
+                targets.push(target);
             }
         }
 
         self.pos += self.batch_size;
 
-        let samples: Vec<i64> = samples.into_iter().flatten().collect();
-        let targets: Vec<i64> = targets.into_iter().flatten().collect();
-
-        let samples = Tensor::of_slice(&samples)
-            .to(self.device)
-            .reshape(&[self.batch_size as i64, self.block_size as i64]);
-        let targets = Tensor::of_slice(&targets)
-            .to(self.device)
-            .reshape(&[self.batch_size as i64, self.block_size as i64]);
+        let samples = Tensor::stack(&samples, 0);
+        let targets = Tensor::stack(&targets, 0);
 
         Some((samples, targets))
     }

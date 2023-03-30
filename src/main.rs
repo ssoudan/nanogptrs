@@ -53,17 +53,17 @@ impl Default for NanoGptArgs {
 struct TrainingParameters {
     /// Learning rate
     // #[arg(short, long, default_value = "0.001")]
-    #[arg(short, long, default_value = "0.0003")]
+    #[arg(long, default_value = "0.0003")]
     lr: f64,
     /// Number of epochs
-    #[arg(short, long, default_value = "1")]
+    #[arg(long, default_value = "1")]
     n_epochs: usize,
     /// Batch size
     // #[arg(short, long, default_value = "32")]
-    #[arg(short, long, default_value = "64")]
+    #[arg(long, default_value = "64")]
     batch_size: usize,
     /// Maximum sequence length
-    #[arg(short, long, default_value = "256")]
+    #[arg(long, default_value = "256")]
     block_size: usize,
 }
 
@@ -136,8 +136,8 @@ fn main() {
     let data = load_file();
     println!("data.len(): {}", data.len());
 
-    // print the first 1000 characters
-    println!("first 1000 chars: {}", &data[0..1000]);
+    // print the first 200 characters
+    println!("first 200 chars:\n----\n{}\n----\n", &data[0..1000]);
 
     // build the vocabulary
     let vocab = Vocab::new(&data);
@@ -152,13 +152,11 @@ fn main() {
     println!("train_data.len(): {}", train_data.len());
     println!("valid_data.len(): {}", valid_data.len());
 
-    let train_data = TokenizedData::new(train_data, vocab.clone());
-    let valid_data = TokenizedData::new(valid_data, vocab.clone());
+    let train_data = TokenizedData::new(train_data, vocab.clone(), device);
+    let valid_data = TokenizedData::new(valid_data, vocab.clone(), device);
 
-    let mut train_dataloader =
-        Loader::from_tokenized_data(train_data, block_size, batch_size, device);
-    let mut valid_dataloader =
-        Loader::from_tokenized_data(valid_data, block_size, batch_size, device);
+    let mut train_dataloader = Loader::from_tokenized_data(train_data, block_size, batch_size);
+    let mut valid_dataloader = Loader::from_tokenized_data(valid_data, block_size, batch_size);
 
     println!(
         "train_dataloader.n_batches(): {}",
@@ -198,6 +196,14 @@ fn main() {
         )),
     };
 
+    // number of parameters
+    let nb_params = vs
+        .trainable_variables()
+        .iter()
+        .map(|t| t.size().iter().product::<i64>())
+        .sum::<i64>();
+    println!("nb parameters: {}", nb_params);
+
     let xs = Tensor::zeros(&[1, 1_i64], (tch::Kind::Int64, device));
     let max_len = 100;
     let ys = model.generate(xs, max_len);
@@ -206,14 +212,6 @@ fn main() {
     let ys: Vec<i64> = ys.into();
     let decoded = vocab.decode(&ys);
     println!("decoded: {}", decoded);
-
-    // number of parameters
-    let nb_params = vs
-        .trainable_variables()
-        .iter()
-        .map(|t| t.size().iter().product::<i64>())
-        .sum::<i64>();
-    println!("num parameters: {}", nb_params);
 
     // train the model
     let mut opt = tch::nn::Adam::default().build(&vs, lr).unwrap();

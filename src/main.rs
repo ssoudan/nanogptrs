@@ -71,6 +71,9 @@ struct TrainingParameters {
     /// Number of batches to use for estimating the losses.
     #[arg(long, default_value = "150")]
     loss_estimation_steps: usize,
+    /// Maximum gradient norm - 0.0 means no clipping.
+    #[arg(long, default_value = "1.0")]
+    max_grad_norm: f64,
 }
 
 /// The model to use.
@@ -242,6 +245,11 @@ fn main() {
         lr,
         steps_between_loss_estimation: args.training_params.steps_between_loss_estimation,
         loss_estimation_steps: args.training_params.loss_estimation_steps,
+        max_grad_norm: if args.training_params.max_grad_norm > 0. {
+            Some(args.training_params.max_grad_norm)
+        } else {
+            None
+        },
     };
 
     learn(
@@ -270,6 +278,7 @@ struct LearnConfig {
     lr: f64,
     steps_between_loss_estimation: usize,
     loss_estimation_steps: usize,
+    max_grad_norm: Option<f64>,
 }
 
 #[allow(clippy::borrowed_box)]
@@ -287,6 +296,7 @@ fn learn<R: Rng>(
         lr,
         steps_between_loss_estimation,
         loss_estimation_steps,
+        max_grad_norm,
     } = learn_config;
 
     // clones the dataloaders for the loss estimation
@@ -324,6 +334,9 @@ fn learn<R: Rng>(
             // opt.backward_step(&loss);
             opt.zero_grad();
             loss_value.backward();
+            if let Some(max_grad_norm) = max_grad_norm {
+                opt.clip_grad_norm(max_grad_norm);
+            }
             opt.step();
 
             if i % 10 == 0 {

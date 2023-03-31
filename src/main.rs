@@ -10,6 +10,9 @@ use tch::nn::OptimizerConfig;
 use tch::{autocast, Tensor};
 
 // TODO(ssoudan): Tensorboard?
+// TODO(ssoudan): Pre-layer norm?
+// TODO(ssoudan): weight decay
+// TODO(ssoudan): lr scheduler
 
 /// Torch device to use.
 #[derive(ValueEnum, Debug, Clone, Copy, Default)]
@@ -27,14 +30,20 @@ enum Device {
 #[derive(Parser, Debug, Clone, Copy)]
 struct NanoGptArgs {
     /// the size of the embedding to use
-    #[arg(short = 'E', long, default_value = "384")]
+    #[arg(short = 'E', long, default_value_t = 384)]
     n_embd: i64,
     /// Number of layers
-    #[arg(short = 'L', long, default_value = "6")]
+    #[arg(short = 'L', long, default_value_t = 6)]
     n_layer: i64,
     /// Number of heads
-    #[arg(short = 'H', long, default_value = "6")]
+    #[arg(short = 'H', long, default_value_t = 6)]
     n_head: i64,
+    /// Dropout probability
+    #[arg(short = 'D', long, default_value_t = 0.1)]
+    dropout: f64,
+    /// Biases
+    #[arg(short = 'B', long, default_value_t = true)]
+    bias: bool,
 }
 
 impl Default for NanoGptArgs {
@@ -43,6 +52,8 @@ impl Default for NanoGptArgs {
             n_embd: 384,
             n_layer: 6,
             n_head: 6,
+            dropout: 0.1,
+            bias: true,
         }
     }
 }
@@ -51,28 +62,26 @@ impl Default for NanoGptArgs {
 #[derive(Parser, Debug, Clone, Copy)]
 struct TrainingParameters {
     /// Learning rate
-    // #[arg(short, long, default_value = "0.0001")]
-    #[arg(long, default_value = "0.0001")]
+    #[arg(long, default_value_t = 6e-4)]
     lr: f64,
     /// Number of epochs
-    #[arg(long, default_value = "1")]
+    #[arg(long, default_value_t = 1)]
     n_epochs: usize,
     /// Batch size
-    // #[arg(short, long, default_value = "32")]
-    #[arg(long, default_value = "64")]
+    #[arg(long, default_value_t = 64)]
     batch_size: usize,
     /// Maximum sequence length
-    #[arg(long, default_value = "256")]
+    #[arg(long, default_value_t = 256)]
     block_size: usize,
     /// Number of training iterations before evaluating the losses on the
     /// training and validation sets.
-    #[arg(long, default_value = "750")]
+    #[arg(long, default_value_t = 750)]
     steps_between_loss_estimation: usize,
     /// Number of batches to use for estimating the losses.
-    #[arg(long, default_value = "150")]
+    #[arg(long, default_value_t = 150)]
     loss_estimation_steps: usize,
     /// Maximum gradient norm - 0.0 means no clipping.
-    #[arg(long, default_value = "1.0")]
+    #[arg(long, default_value_t = 1.0)]
     max_grad_norm: f64,
 }
 
@@ -193,6 +202,8 @@ fn main() {
             n_embd,
             n_layer,
             n_head,
+            dropout,
+            bias,
         }) => {
             let config = NanoGptConfig {
                 vocab_size: vocab.size() as i64,
@@ -200,6 +211,8 @@ fn main() {
                 n_embd,
                 n_head,
                 n_layer,
+                dropout,
+                bias,
             };
             Box::new(nanogptrs::model::NanoGpt::new(&vs.root(), config))
         }

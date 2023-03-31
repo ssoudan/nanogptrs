@@ -48,6 +48,33 @@ impl ModuleT for BigramLanguageModel {
     }
 }
 
+/// Head configuration
+#[derive(Debug, Clone, Copy)]
+pub struct HeadConfig {
+    /// The size of the head.
+    pub head_size: i64,
+    /// Block size.
+    pub block_size: i64,
+    /// The embedding size.
+    pub n_embd: i64,
+    /// Whether to use bias.
+    pub bias: bool,
+    /// Dropout probability.
+    pub dropout: f64,
+}
+
+impl From<&MultiHeadSelfAttentionConfig> for HeadConfig {
+    fn from(config: &MultiHeadSelfAttentionConfig) -> Self {
+        Self {
+            head_size: config.head_size,
+            block_size: config.block_size,
+            n_embd: config.n_embd,
+            bias: config.bias,
+            dropout: config.dropout,
+        }
+    }
+}
+
 /// One head self-attention.
 #[derive(Debug)]
 struct Head {
@@ -55,6 +82,7 @@ struct Head {
     query: nn::Linear,
     value: nn::Linear,
     mask: Tensor,
+    dropout: f64,
     head_size: i64,
 }
 
@@ -63,9 +91,7 @@ impl Head {
     ///
     /// # Arguments
     /// * `vs` - The path to the module.
-    /// * `block_size` - The maximum sequence length.
-    /// * `n_emb` - The embedding size.
-    /// * `head_size` - The size of the head.
+    /// * `config` - The configuration. See [`HeadConfig`].
     ///
     /// # Returns
     /// A new Head.
@@ -73,40 +99,43 @@ impl Head {
     /// # Notes
     /// The input of `forward` is expected to be of shape `[batch_size,
     /// block_size, C]`.
-    pub fn new<'a, T: Borrow<Path<'a>>>(
-        vs: T,
-        block_size: i64,
-        n_emb: i64,
-        head_size: i64,
-    ) -> Self {
+    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: HeadConfig) -> Self {
+        let HeadConfig {
+            head_size,
+            block_size,
+            n_embd,
+            bias,
+            dropout,
+        } = config;
+
         let vs = vs.borrow();
 
         let device = vs.device();
 
         let key = nn::linear(
             vs / "key",
-            n_emb,
+            n_embd,
             head_size,
             LinearConfig {
-                bias: false,
+                bias,
                 ..Default::default()
             },
         );
         let query = nn::linear(
             vs / "query",
-            n_emb,
+            n_embd,
             head_size,
             LinearConfig {
-                bias: false,
+                bias,
                 ..Default::default()
             },
         );
         let value = nn::linear(
             vs / "value",
-            n_emb,
+            n_embd,
             head_size,
             LinearConfig {
-                bias: false,
+                bias,
                 ..Default::default()
             },
         );
@@ -117,6 +146,7 @@ impl Head {
             value,
             mask,
             head_size,
+            dropout,
         }
     }
 }
@@ -144,7 +174,7 @@ impl ModuleT for Head {
         let wei = wei.softmax(-1, tch::Kind::Float);
         assert_eq!(wei.size(), &[b, t, t]);
 
-        let wei = wei.dropout(0.2, train);
+        let wei = wei.dropout(self.dropout, train);
 
         // weighted aggregation of the values
         let out = wei.matmul(&v); // [b, t, head_size]
@@ -155,7 +185,7 @@ impl ModuleT for Head {
 }
 
 /// Configuration for the MultiHeadSelfAttention layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub struct MultiHeadSelfAttentionConfig {
     /// The maximum sequence length.
     pub block_size: i64,
@@ -165,6 +195,10 @@ pub struct MultiHeadSelfAttentionConfig {
     pub head_size: i64,
     /// The number of heads.
     pub n_head: i64,
+    /// Bias flag.
+    pub bias: bool,
+    /// Dropout probability.
+    pub dropout: f64,
 }
 
 impl From<&BlockConfig> for MultiHeadSelfAttentionConfig {
@@ -174,6 +208,8 @@ impl From<&BlockConfig> for MultiHeadSelfAttentionConfig {
             n_embd: config.n_embd,
             head_size: config.head_size,
             n_head: config.n_head,
+            bias: config.bias,
+            dropout: config.dropout,
         }
     }
 }
@@ -183,6 +219,7 @@ impl From<&BlockConfig> for MultiHeadSelfAttentionConfig {
 pub struct MultiHeadSelfAttention {
     heads: Vec<Head>,
     projection: nn::Linear,
+    dropout: f64,
 }
 
 impl MultiHeadSelfAttention {
@@ -194,29 +231,36 @@ impl MultiHeadSelfAttention {
     /// A new MultiHeadSelfAttention.
     pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: MultiHeadSelfAttentionConfig) -> Self {
         let MultiHeadSelfAttentionConfig {
-            block_size,
-            n_embd: n_emb,
-            head_size,
+            n_embd,
             n_head,
+            bias,
+            dropout,
+            ..
         } = config;
+
+        let head_config = HeadConfig::from(&config);
 
         let vs = vs.borrow();
 
         let heads = (0..n_head)
-            .map(|i| Head::new(vs / i, block_size, n_emb, head_size))
+            .map(|i| Head::new(vs / i, head_config))
             .collect();
 
         let projection = nn::linear(
             vs / "projection",
-            n_emb,
-            n_emb,
+            n_embd,
+            n_embd,
             LinearConfig {
-                bias: false,
+                bias,
                 ..Default::default()
             },
         );
 
-        Self { heads, projection }
+        Self {
+            heads,
+            projection,
+            dropout,
+        }
     }
 }
 
@@ -231,7 +275,25 @@ impl ModuleT for MultiHeadSelfAttention {
 
         let out = Tensor::cat(&heads, -1);
 
-        out.apply(&self.projection).dropout(0.2, train)
+        out.apply(&self.projection).dropout(self.dropout, train)
+    }
+}
+
+/// Feed forward layer configuration.
+#[derive(Debug, Clone, Copy)]
+pub struct FeedForwardConfig {
+    /// The embedding size.
+    pub n_embd: i64,
+    /// The dropout probability.
+    pub dropout: f64,
+}
+
+impl From<&BlockConfig> for FeedForwardConfig {
+    fn from(config: &BlockConfig) -> Self {
+        Self {
+            n_embd: config.n_embd,
+            dropout: config.dropout,
+        }
     }
 }
 
@@ -243,7 +305,9 @@ struct FeedForward {
 
 impl FeedForward {
     /// Create a new FeedForward
-    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, n_embd: i64) -> Self {
+    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: FeedForwardConfig) -> Self {
+        let FeedForwardConfig { n_embd, dropout } = config;
+
         let vs = vs.borrow();
         let net = nn::seq_t()
             .add(nn::linear(
@@ -259,7 +323,7 @@ impl FeedForward {
                 n_embd,
                 Default::default(),
             ))
-            .add_fn_t(|xs, train| xs.dropout(0.2, train));
+            .add_fn_t(move |xs, train| xs.dropout(dropout, train));
 
         Self { net }
     }
@@ -272,7 +336,7 @@ impl ModuleT for FeedForward {
 }
 
 /// Block configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub struct BlockConfig {
     /// The maximum sequence length.
     pub block_size: i64,
@@ -282,6 +346,23 @@ pub struct BlockConfig {
     pub head_size: i64,
     /// The number of heads.
     pub n_head: i64,
+    /// Bias flag.
+    pub bias: bool,
+    /// Dropout probability.
+    pub dropout: f64,
+}
+
+impl From<&NanoGptConfig> for BlockConfig {
+    fn from(config: &NanoGptConfig) -> Self {
+        Self {
+            block_size: config.block_size,
+            n_embd: config.n_embd,
+            head_size: config.n_embd / config.n_head,
+            n_head: config.n_head,
+            bias: config.bias,
+            dropout: config.dropout,
+        }
+    }
 }
 
 /// LayerNorm configuration.
@@ -314,7 +395,7 @@ impl Default for LayerNormConfig {
     }
 }
 
-/// Layer normalization with no biases.
+/// Layer normalization with optionally no biases.
 ///
 /// - See [Layer Normalization](https://arxiv.org/abs/1607.06450).
 /// - See [`nn::LayerNorm`].
@@ -372,17 +453,6 @@ impl nn::Module for LayerNorm {
     }
 }
 
-impl From<&NanoGptConfig> for BlockConfig {
-    fn from(config: &NanoGptConfig) -> Self {
-        Self {
-            block_size: config.block_size,
-            n_embd: config.n_embd,
-            head_size: config.n_embd / config.n_head,
-            n_head: config.n_head,
-        }
-    }
-}
-
 /// A Block is a transformer decoder block.
 #[derive(Debug)]
 struct Block {
@@ -412,19 +482,20 @@ impl Block {
         let vs = vs.borrow();
 
         let mhsa_config = MultiHeadSelfAttentionConfig::from(&config);
+        let ffwd_config = FeedForwardConfig::from(&config);
 
         let BlockConfig { n_embd, n_head, .. } = config;
 
         assert_eq!(n_embd % n_head, 0, "n_emb must be divisible by n_head");
 
         let sa_heads = MultiHeadSelfAttention::new(vs / "sa_heads", mhsa_config);
-        let ffwd = FeedForward::new(vs / "ffwd", n_embd);
+        let ffwd = FeedForward::new(vs / "ffwd", ffwd_config);
 
         let ln1 = layer_norm(
             vs / "ln1",
             vec![n_embd],
             LayerNormConfig {
-                elementwise_bias: false,
+                elementwise_bias: config.bias,
                 ..Default::default()
             },
         );
@@ -432,7 +503,7 @@ impl Block {
             vs / "ln2",
             vec![n_embd],
             LayerNormConfig {
-                elementwise_bias: false,
+                elementwise_bias: config.bias,
                 ..Default::default()
             },
         );
@@ -492,6 +563,10 @@ pub struct NanoGptConfig {
     pub n_head: i64,
     /// The number of layers.
     pub n_layer: i64,
+    /// The dropout probability.
+    pub dropout: f64,
+    /// Biases flag.
+    pub bias: bool,
 }
 
 impl NanoGpt {
@@ -711,6 +786,8 @@ mod tests {
         let n_embd = 32;
         let n_head = 4;
         let n_layer = 2;
+        let bias = true;
+        let dropout = 0.1;
 
         let config = NanoGptConfig {
             vocab_size,
@@ -718,6 +795,8 @@ mod tests {
             n_embd,
             n_head,
             n_layer,
+            bias,
+            dropout,
         };
 
         let model = NanoGpt::new(&vs.root(), config);
@@ -745,6 +824,8 @@ mod tests {
         let n_embd = 32;
         let n_head = 4;
         let n_layer = 2;
+        let bias = true;
+        let dropout = 0.1;
 
         let config = NanoGptConfig {
             vocab_size,
@@ -752,6 +833,8 @@ mod tests {
             n_embd,
             n_head,
             n_layer,
+            bias,
+            dropout,
         };
 
         let model = NanoGpt::new(&vs.root(), config);
@@ -777,6 +860,8 @@ mod tests {
         let n_embd = 32;
         let n_head = 4;
         let n_layer = 2;
+        let bias = true;
+        let dropout = 0.1;
 
         let config = NanoGptConfig {
             vocab_size,
@@ -784,6 +869,8 @@ mod tests {
             n_embd,
             n_head,
             n_layer,
+            bias,
+            dropout,
         };
 
         let model = NanoGpt::new(&vs.root(), config);

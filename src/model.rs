@@ -299,7 +299,7 @@ impl From<&BlockConfig> for FeedForwardConfig {
 
 /// Feed forward layer
 #[derive(Debug)]
-struct FeedForward {
+pub struct FeedForward {
     net: SequentialT,
 }
 
@@ -367,19 +367,19 @@ impl From<&NanoGptConfig> for BlockConfig {
 
 /// LayerNorm configuration.
 #[derive(Debug, Clone, Copy)]
-struct LayerNormConfig {
+pub struct LayerNormConfig {
     /// Whether to use CUDNN.
     pub cudnn_enabled: bool,
     /// A small constant added to the denominator for numerical stability.
     pub eps: f64,
     /// Whether to apply a linear transformation.
-    elementwise_linear: bool,
+    pub elementwise_linear: bool,
     /// Whether to apply a bias.
-    elementwise_bias: bool,
+    pub elementwise_bias: bool,
     /// The weight initialization.
-    ws_init: Init,
+    pub ws_init: Init,
     /// The bias initialization.
-    bs_init: Init,
+    pub bs_init: Init,
 }
 
 impl Default for LayerNormConfig {
@@ -404,39 +404,49 @@ pub struct LayerNorm {
     /// The configuration.
     config: LayerNormConfig,
     /// The weight.
-    pub ws: Option<Tensor>,
+    ws: Option<Tensor>,
     /// The bias.
-    pub bs: Option<Tensor>,
+    bs: Option<Tensor>,
     /// The normalized shape.
-    pub normalized_shape: Vec<i64>,
+    normalized_shape: Vec<i64>,
 }
 
-fn layer_norm<'a, T: Borrow<Path<'a>>>(
-    vs: T,
-    normalized_shape: Vec<i64>,
-    config: LayerNormConfig,
-) -> LayerNorm {
-    let vs = vs.borrow();
+impl LayerNorm {
+    /// Create a new LayerNorm.
+    ///
+    /// # Arguments
+    /// * `vs` - The variable store.
+    /// * `normalized_shape` - The shape of the normalized tensor.
+    /// * `config` - The configuration.
+    /// # Returns
+    /// The LayerNorm.
+    pub fn new<'a, T: Borrow<Path<'a>>>(
+        vs: T,
+        normalized_shape: Vec<i64>,
+        config: LayerNormConfig,
+    ) -> LayerNorm {
+        let vs = vs.borrow();
 
-    let ws = if config.elementwise_linear {
-        let ws = vs.var("weight", normalized_shape.as_slice(), config.ws_init);
-        Some(ws)
-    } else {
-        None
-    };
+        let ws = if config.elementwise_linear {
+            let ws = vs.var("weight", normalized_shape.as_slice(), config.ws_init);
+            Some(ws)
+        } else {
+            None
+        };
 
-    let bs = if config.elementwise_bias {
-        let bs = vs.var("bias", normalized_shape.as_slice(), config.bs_init);
-        Some(bs)
-    } else {
-        None
-    };
+        let bs = if config.elementwise_bias {
+            let bs = vs.var("bias", normalized_shape.as_slice(), config.bs_init);
+            Some(bs)
+        } else {
+            None
+        };
 
-    LayerNorm {
-        config,
-        ws,
-        bs,
-        normalized_shape,
+        Self {
+            config,
+            ws,
+            bs,
+            normalized_shape,
+        }
     }
 }
 
@@ -491,7 +501,7 @@ impl Block {
         let sa_heads = MultiHeadSelfAttention::new(vs / "sa_heads", mhsa_config);
         let ffwd = FeedForward::new(vs / "ffwd", ffwd_config);
 
-        let ln1 = layer_norm(
+        let ln1 = LayerNorm::new(
             vs / "ln1",
             vec![n_embd],
             LayerNormConfig {
@@ -499,7 +509,7 @@ impl Block {
                 ..Default::default()
             },
         );
-        let ln2 = layer_norm(
+        let ln2 = LayerNorm::new(
             vs / "ln2",
             vec![n_embd],
             LayerNormConfig {
@@ -535,7 +545,7 @@ pub struct NanoGpt {
     /// The embedding layer
     token_embedding: nn::Embedding,
     /// The position embedding layer
-    pub position_embedding: nn::Embedding,
+    position_embedding: nn::Embedding,
     /// LM head
     lm_head: nn::Linear,
     /// The embedding size
@@ -612,7 +622,7 @@ impl NanoGpt {
             },
         );
 
-        let ln = layer_norm(
+        let ln = LayerNorm::new(
             vs / "ln",
             vec![n_embd],
             LayerNormConfig {

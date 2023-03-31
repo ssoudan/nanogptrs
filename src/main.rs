@@ -10,7 +10,6 @@ use tch::nn::OptimizerConfig;
 use tch::Tensor;
 
 // TODO(ssoudan): Tensorboard?
-// TODO(ssoudan): Pre-layer norm?
 // TODO(ssoudan): weight decay
 // TODO(ssoudan): lr scheduler
 

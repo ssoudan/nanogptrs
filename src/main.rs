@@ -214,7 +214,7 @@ fn main() {
         .sum::<i64>();
     println!("nb parameters: {}", nb_params);
 
-    let xs = Tensor::zeros(&[1, 1_i64], (tch::Kind::Int64, device));
+    let xs = Tensor::zeros(&[1, 1_i64], (tch::Kind::Int, device));
     let max_len = 100;
     let ys = model.generate(xs, max_len);
 
@@ -226,13 +226,13 @@ fn main() {
     // half precision training
     // TODO(ssoudan) support half precision training
     vs.float();
-    // vs.trainable_variables().iter().for_each(|t| {
-    //     println!("t: {:?}", t);
-    // });
-    //
-    // vs.variables().iter().for_each(|t| {
-    //     println!("t: {:?}", t);
-    // });
+    vs.trainable_variables().iter().for_each(|t| {
+        println!("t: {:?}", t);
+    });
+
+    vs.variables().iter().for_each(|t| {
+        println!("t: {:?}", t);
+    });
 
     // Initialize the progress bars
     let mut pb_reporter = PbProgressReporter::default();

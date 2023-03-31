@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use tch::nn::{ModuleT, Path, SequentialT};
+use tch::nn::{Init, LinearConfig, ModuleT, Path, SequentialT};
 use tch::{nn, IndexOp, Tensor};
 
 /// BigramLanguageModel is a language model that uses the current token to
@@ -87,9 +87,33 @@ impl Head {
 
         let device = vs.device();
 
-        let key = nn::linear(vs / "key", n_emb, head_size, Default::default());
-        let query = nn::linear(vs / "query", n_emb, head_size, Default::default());
-        let value = nn::linear(vs / "value", n_emb, head_size, Default::default());
+        let key = nn::linear(
+            vs / "key",
+            n_emb,
+            head_size,
+            LinearConfig {
+                bias: false,
+                ..Default::default()
+            },
+        );
+        let query = nn::linear(
+            vs / "query",
+            n_emb,
+            head_size,
+            LinearConfig {
+                bias: false,
+                ..Default::default()
+            },
+        );
+        let value = nn::linear(
+            vs / "value",
+            n_emb,
+            head_size,
+            LinearConfig {
+                bias: false,
+                ..Default::default()
+            },
+        );
         let mask = Tensor::ones(&[block_size, block_size], (tch::Kind::Float, device)).tril(0);
         Self {
             key,
@@ -186,7 +210,15 @@ impl MultiHeadSelfAttention {
             .map(|i| Head::new(vs / i, block_size, n_emb, head_size))
             .collect();
 
-        let projection = nn::linear(vs / "projection", n_emb, n_emb, Default::default());
+        let projection = nn::linear(
+            vs / "projection",
+            n_emb,
+            n_emb,
+            LinearConfig {
+                bias: false,
+                ..Default::default()
+            },
+        );
 
         Self { heads, projection }
     }
@@ -256,6 +288,94 @@ pub struct BlockConfig {
     pub n_head: i64,
 }
 
+/// LayerNorm configuration.
+#[derive(Debug, Clone, Copy)]
+struct LayerNormConfig {
+    /// Whether to use CUDNN.
+    pub cudnn_enabled: bool,
+    /// A small constant added to the denominator for numerical stability.
+    pub eps: f64,
+    /// Whether to apply a linear transformation.
+    elementwise_linear: bool,
+    /// Whether to apply a bias.
+    elementwise_bias: bool,
+    /// The weight initialization.
+    ws_init: Init,
+    /// The bias initialization.
+    bs_init: Init,
+}
+
+impl Default for LayerNormConfig {
+    fn default() -> Self {
+        Self {
+            elementwise_linear: true,
+            elementwise_bias: true,
+            eps: 1e-5,
+            cudnn_enabled: true,
+            ws_init: Init::Const(1.),
+            bs_init: Init::Const(0.),
+        }
+    }
+}
+
+/// Layer normalization with no biases.
+///
+/// - See [Layer Normalization](https://arxiv.org/abs/1607.06450).
+/// - See [`nn::LayerNorm`].
+#[derive(Debug)]
+pub struct LayerNorm {
+    /// The configuration.
+    config: LayerNormConfig,
+    /// The weight.
+    pub ws: Option<Tensor>,
+    /// The bias.
+    pub bs: Option<Tensor>,
+    /// The normalized shape.
+    pub normalized_shape: Vec<i64>,
+}
+
+fn layer_norm<'a, T: Borrow<Path<'a>>>(
+    vs: T,
+    normalized_shape: Vec<i64>,
+    config: LayerNormConfig,
+) -> LayerNorm {
+    let vs = vs.borrow();
+
+    let ws = if config.elementwise_linear {
+        let ws = vs.var("weight", normalized_shape.as_slice(), config.ws_init);
+        Some(ws)
+    } else {
+        None
+    };
+
+    let bs = if config.elementwise_bias {
+        let bs = vs.var("bias", normalized_shape.as_slice(), config.bs_init);
+        Some(bs)
+    } else {
+        None
+    };
+
+    LayerNorm {
+        config,
+        ws,
+        bs,
+        normalized_shape,
+    }
+}
+
+impl nn::Module for LayerNorm {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        Tensor::layer_norm(
+            xs,
+            self.normalized_shape.as_slice(),
+            self.ws.as_ref(),
+            self.bs.as_ref(),
+            self.config.eps,
+            self.config.cudnn_enabled,
+        )
+    }
+}
+
 impl From<&NanoGptConfig> for BlockConfig {
     fn from(config: &NanoGptConfig) -> Self {
         Self {
@@ -275,9 +395,9 @@ struct Block {
     /// Feed forward layer
     ffwd: FeedForward,
     /// Layer normalization
-    ln1: nn::LayerNorm,
+    ln1: LayerNorm,
     /// Layer normalization
-    ln2: nn::LayerNorm,
+    ln2: LayerNorm,
 }
 
 impl Block {
@@ -304,8 +424,22 @@ impl Block {
         let sa_heads = MultiHeadSelfAttention::new(vs / "sa_heads", mhsa_config);
         let ffwd = FeedForward::new(vs / "ffwd", n_embd);
 
-        let ln1 = nn::layer_norm(vs / "ln1", vec![n_embd], Default::default());
-        let ln2 = nn::layer_norm(vs / "ln2", vec![n_embd], Default::default());
+        let ln1 = layer_norm(
+            vs / "ln1",
+            vec![n_embd],
+            LayerNormConfig {
+                elementwise_bias: false,
+                ..Default::default()
+            },
+        );
+        let ln2 = layer_norm(
+            vs / "ln2",
+            vec![n_embd],
+            LayerNormConfig {
+                elementwise_bias: false,
+                ..Default::default()
+            },
+        );
 
         Self {
             sa_heads,
@@ -319,11 +453,12 @@ impl Block {
 impl nn::ModuleT for Block {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // SA heads with residual connection
-        let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train); // [b, t, n_embd]
+        let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train);
+        // [b, t, n_embd]
 
         // Feed forward layer with residual connection
-        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.ffwd, train) // [b, t,
-                                                                       // n_embd]
+        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.ffwd, train)
+        // [b, t, n_embd]
     }
 }
 

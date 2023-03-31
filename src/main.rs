@@ -226,13 +226,13 @@ fn main() {
     // half precision training
     // TODO(ssoudan) support half precision training
     vs.float();
-    vs.trainable_variables().iter().for_each(|t| {
-        println!("t: {:?}", t);
-    });
-
-    vs.variables().iter().for_each(|t| {
-        println!("t: {:?}", t);
-    });
+    // vs.trainable_variables().iter().for_each(|t| {
+    //     println!("t: {:?}", t);
+    // });
+    //
+    // vs.variables().iter().for_each(|t| {
+    //     println!("t: {:?}", t);
+    // });
 
     // Initialize the progress bars
     let mut pb_reporter = PbProgressReporter::default();

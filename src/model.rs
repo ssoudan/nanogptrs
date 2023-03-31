@@ -9,16 +9,12 @@ use tch::{nn, IndexOp, Tensor};
 pub struct BigramLanguageModel {
     /// The embedding layer
     embedding: nn::Embedding,
-    // /// The linear layer
-    // linear: nn::Linear,
 }
 
 impl BigramLanguageModel {
     /// Create a new BigramLanguageModel
     pub fn new(vs: &nn::Path, vocab_size: i64) -> Self {
         let embedding = nn::embedding(vs / "embedding", vocab_size, vocab_size, Default::default());
-        // let linear = nn::linear(vs / "linear", embedding_dim, hidden_dim,
-        // Default::default());
 
         Self { embedding }
     }
@@ -531,7 +527,15 @@ impl NanoGpt {
             layers = layers.add(Block::new(vs / i, block_config));
         }
 
-        let lm_head = nn::linear(vs / "lm_head", n_embd, vocab_size, Default::default());
+        let lm_head = nn::linear(
+            vs / "lm_head",
+            n_embd,
+            vocab_size,
+            LinearConfig {
+                bias: false,
+                ..Default::default()
+            },
+        );
 
         let ln = nn::layer_norm(vs / "ln", vec![n_embd], Default::default());
 

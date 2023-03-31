@@ -39,9 +39,9 @@ struct NanoGptArgs {
     #[arg(short = 'H', long, default_value_t = 6)]
     n_head: i64,
     /// Dropout probability
-    #[arg(short = 'D', long, default_value_t = 0.1)]
+    #[arg(short = 'D', long, default_value_t = 0.2)]
     dropout: f64,
-    /// Biases
+    /// Biases - default is true
     #[arg(short = 'B', long, default_value_t = true)]
     bias: bool,
 }
@@ -52,7 +52,7 @@ impl Default for NanoGptArgs {
             n_embd: 384,
             n_layer: 6,
             n_head: 6,
-            dropout: 0.1,
+            dropout: 0.2,
             bias: true,
         }
     }
@@ -62,7 +62,7 @@ impl Default for NanoGptArgs {
 #[derive(Parser, Debug, Clone, Copy)]
 struct TrainingParameters {
     /// Learning rate
-    #[arg(long, default_value_t = 6e-4)]
+    #[arg(long, default_value_t = 1e-4)]
     lr: f64,
     /// Number of epochs
     #[arg(long, default_value_t = 1)]

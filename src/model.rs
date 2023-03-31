@@ -476,7 +476,7 @@ pub struct NanoGpt {
     /// Layers
     layers: SequentialT,
     /// Layer normalization
-    ln: nn::LayerNorm,
+    ln: LayerNorm,
 }
 
 /// NanoGpt configuration.
@@ -537,7 +537,14 @@ impl NanoGpt {
             },
         );
 
-        let ln = nn::layer_norm(vs / "ln", vec![n_embd], Default::default());
+        let ln = layer_norm(
+            vs / "ln",
+            vec![n_embd],
+            LayerNormConfig {
+                elementwise_bias: false,
+                ..Default::default()
+            },
+        );
 
         Self {
             token_embedding,

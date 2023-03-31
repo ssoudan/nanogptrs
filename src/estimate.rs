@@ -1,6 +1,7 @@
+use tch::Tensor;
+
 use crate::data::Loader;
 use crate::model::LMModel;
-use tch::Tensor;
 
 /// Estimates of the loss on the training and validation sets.
 pub struct LossEstimates {
@@ -14,13 +15,15 @@ pub struct LossEstimates {
 pub trait ProgressReporter {
     /// Called at the start of the loss estimation for the training sets.
     fn train_loss_start(&mut self, total_train_batches: usize);
-    /// Called to update the progress of the loss estimation for the training sets.
+    /// Called to update the progress of the loss estimation for the training
+    /// sets.
     fn train_loss_progress(&mut self, current_train_batches: usize);
     /// Called at the end of the loss estimation for the training sets.
     fn train_loss_end(&mut self, train_loss: f64);
     /// Called at the start of the loss estimation for the validation sets.
     fn valid_loss_start(&mut self, total_valid_batches: usize);
-    /// Called to update the progress of the loss estimation for the validation sets.
+    /// Called to update the progress of the loss estimation for the validation
+    /// sets.
     fn valid_loss_progress(&mut self, current_valid_batches: usize);
     /// Called at the end of the loss estimation for the validation sets.
     fn valid_loss_end(&mut self, valid_loss: f64);
@@ -31,10 +34,15 @@ pub struct NullProgressReporter;
 
 impl ProgressReporter for NullProgressReporter {
     fn train_loss_start(&mut self, _total_train_batches: usize) {}
+
     fn train_loss_progress(&mut self, _current_train_batches: usize) {}
+
     fn train_loss_end(&mut self, _train_loss: f64) {}
+
     fn valid_loss_start(&mut self, _total_valid_batches: usize) {}
+
     fn valid_loss_progress(&mut self, _current_valid_batches: usize) {}
+
     fn valid_loss_end(&mut self, _valid_loss: f64) {}
 }
 
@@ -118,5 +126,3 @@ impl<'a> LossEstimator<'a> {
         }
     }
 }
-
-// TODO(ssoudan) test

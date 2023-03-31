@@ -10,7 +10,6 @@ use tch::nn::OptimizerConfig;
 use tch::{autocast, Tensor};
 
 // TODO(ssoudan): Tensorboard?
-// TODO(ssoudan): Count the number of parameters
 
 /// Torch device to use.
 #[derive(ValueEnum, Debug, Clone, Copy, Default)]
@@ -65,6 +64,13 @@ struct TrainingParameters {
     /// Maximum sequence length
     #[arg(long, default_value = "256")]
     block_size: usize,
+    /// Number of training iterations before evaluating the losses on the
+    /// training and validation sets.
+    #[arg(long, default_value = "750")]
+    steps_between_loss_estimation: usize,
+    /// Number of batches to use for estimating the losses.
+    #[arg(long, default_value = "150")]
+    loss_estimation_steps: usize,
 }
 
 /// The model to use.
@@ -231,15 +237,11 @@ fn main() {
     // Initialize the progress bars
     let mut pb_reporter = PbProgressReporter::default();
 
-    // TODO(ssoudan) do better
-    let loss_estimation_steps = 150;
-    let steps_between_loss_estimation = 750;
-
     let learn_config = LearnConfig {
         n_epochs,
         lr,
-        steps_between_loss_estimation,
-        loss_estimation_steps,
+        steps_between_loss_estimation: args.training_params.steps_between_loss_estimation,
+        loss_estimation_steps: args.training_params.loss_estimation_steps,
     };
 
     learn(
@@ -346,7 +348,8 @@ fn learn<R: Rng>(
                 );
                 let loss_estimates = estimator.estimate_loss(
                     model.as_ref(),
-                    loss_estimation_steps, // use the same number of batches for training and validation
+                    loss_estimation_steps, /* use the same number of batches for training and
+                                            * validation */
                     loss_estimation_steps,
                     pb_reporter,
                 );

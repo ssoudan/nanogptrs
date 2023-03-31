@@ -113,11 +113,12 @@ type Batch = (Tensor, Tensor);
 ///
 /// Batches are made of `batch_size` random samples.
 ///
-/// For example, if data is [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12], `block_size` is 3 and `batch_size` is 2,
-/// the data loader could return the following batches:
+/// For example, if data is [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12],
+/// `block_size` is 3 and `batch_size` is 2, the data loader could return the
+/// following batches:
 /// - batch 1: (tensor([[0, 1, 2], [3, 4, 5]]), tensor([[1, 2, 3], [4, 5, 6]]))
-/// - batch 2: (tensor([[6, 7, 8], [9, 10, 11]]), tensor([[7, 8, 9], [10, 11, 12]]))
-///
+/// - batch 2: (tensor([[6, 7, 8], [9, 10, 11]]), tensor([[7, 8, 9], [10, 11,
+///   12]]))
 #[derive(Clone)]
 pub struct Loader {
     data: TokenizedData,
@@ -193,8 +194,8 @@ impl Loader {
     }
 
     /// Pick a random order for the sequences to be picked to make the batches
-    /// Also reset the position in the order. This means that `n_batches()` batches are available
-    /// from here.
+    /// Also reset the position in the order. This means that `n_batches()`
+    /// batches are available from here.
     pub fn shuffle<R: Rng>(&mut self, rng: &mut R) {
         let mut order: Vec<usize> = (0..self.n_samples).collect();
         order.shuffle(rng);

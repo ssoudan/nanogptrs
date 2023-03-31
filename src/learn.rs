@@ -1,7 +1,9 @@
+use std::fmt::Write;
+
+use indicatif::{MultiProgress, ProgressBar, ProgressState, ProgressStyle};
+
 use crate::estimate;
 use crate::estimate::LossEstimates;
-use indicatif::{MultiProgress, ProgressBar, ProgressState, ProgressStyle};
-use std::fmt::Write;
 
 /// Progress reporter that uses the `indicatif` crate to display progress bars.
 ///

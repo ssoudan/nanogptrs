@@ -1,10 +1,10 @@
 use std::borrow::Borrow;
-use tch::nn;
-use tch::nn::{ModuleT, Path, SequentialT};
-use tch::IndexOp;
-use tch::Tensor;
 
-/// BigramLanguageModel is a language model that uses the current token to predict the next token.
+use tch::nn::{ModuleT, Path, SequentialT};
+use tch::{nn, IndexOp, Tensor};
+
+/// BigramLanguageModel is a language model that uses the current token to
+/// predict the next token.
 #[derive(Debug)]
 pub struct BigramLanguageModel {
     /// The embedding layer
@@ -17,7 +17,8 @@ impl BigramLanguageModel {
     /// Create a new BigramLanguageModel
     pub fn new(vs: &nn::Path, vocab_size: i64) -> Self {
         let embedding = nn::embedding(vs / "embedding", vocab_size, vocab_size, Default::default());
-        // let linear = nn::linear(vs / "linear", embedding_dim, hidden_dim, Default::default());
+        // let linear = nn::linear(vs / "linear", embedding_dim, hidden_dim,
+        // Default::default());
 
         Self { embedding }
     }
@@ -74,7 +75,8 @@ impl Head {
     /// A new Head.
     ///
     /// # Notes
-    /// The input of `forward` is expected to be of shape `[batch_size, block_size, C]`.
+    /// The input of `forward` is expected to be of shape `[batch_size,
+    /// block_size, C]`.
     pub fn new<'a, T: Borrow<Path<'a>>>(
         vs: T,
         block_size: i64,
@@ -208,27 +210,36 @@ impl nn::ModuleT for MultiHeadSelfAttention {
 /// Feed forward layer
 #[derive(Debug)]
 struct FeedForward {
-    net: nn::Linear,
-    projection: nn::Linear,
-    // TODO(ssoudan) use nn.Sequential
+    net: nn::SequentialT,
 }
 
 impl FeedForward {
     /// Create a new FeedForward
     pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, n_embd: i64) -> Self {
         let vs = vs.borrow();
-        let net = nn::linear(vs / "net", n_embd, 4 * n_embd, Default::default());
-        let projection = nn::linear(vs / "projection", 4 * n_embd, n_embd, Default::default());
-        Self { net, projection }
+        let net = nn::seq_t()
+            .add(nn::linear(
+                vs / "net",
+                n_embd,
+                4 * n_embd,
+                Default::default(),
+            ))
+            .add_fn(|xs| xs.relu())
+            .add(nn::linear(
+                vs / "projection",
+                4 * n_embd,
+                n_embd,
+                Default::default(),
+            ))
+            .add_fn_t(|xs, train| xs.dropout(0.2, train));
+
+        Self { net }
     }
 }
 
 impl nn::ModuleT for FeedForward {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
-        xs.apply(&self.net)
-            .relu()
-            .apply(&self.projection)
-            .dropout(0.2, train)
+        self.net.forward_t(xs, train)
     }
 }
 
@@ -311,7 +322,8 @@ impl nn::ModuleT for Block {
         let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train); // [b, t, n_embd]
 
         // Feed forward layer with residual connection
-        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.ffwd, train) // [b, t, n_embd]
+        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.ffwd, train) // [b, t,
+                                                                       // n_embd]
     }
 }
 
@@ -576,7 +588,8 @@ mod tests {
         let _loss = loss(&logits, &xs);
     }
 
-    /// Test the NanoGpt forward pass with a sequence shorter than the maximum length (block_size)
+    /// Test the NanoGpt forward pass with a sequence shorter than the maximum
+    /// length (block_size)
     #[test]
     fn test_nano_gpt_forward_shorter_sequence() {
         let vs = nn::VarStore::new(tch::Device::Cpu);

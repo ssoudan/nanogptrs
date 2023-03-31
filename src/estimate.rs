@@ -80,7 +80,7 @@ impl<'a> LossEstimator<'a> {
             train_loss += f64::from((self.loss)(&logits, &ys));
             n_train_batches += 1;
 
-            if n_train_batches % 100 == 0 {
+            if n_train_batches % 10 == 0 {
                 progress_callback.train_loss_progress(n_train_batches);
             }
 
@@ -99,7 +99,7 @@ impl<'a> LossEstimator<'a> {
             valid_loss += f64::from((self.loss)(&logits, &ys));
             n_valid_batches += 1;
 
-            if n_valid_batches % 100 == 0 {
+            if n_valid_batches % 10 == 0 {
                 progress_callback.valid_loss_progress(n_valid_batches);
             }
 

@@ -52,8 +52,8 @@ impl Default for NanoGptArgs {
 #[derive(Parser, Debug, Clone, Copy)]
 struct TrainingParameters {
     /// Learning rate
-    // #[arg(short, long, default_value = "0.001")]
-    #[arg(long, default_value = "0.0003")]
+    // #[arg(short, long, default_value = "0.0001")]
+    #[arg(long, default_value = "0.0001")]
     lr: f64,
     /// Number of epochs
     #[arg(long, default_value = "1")]
@@ -232,8 +232,8 @@ fn main() {
     let mut pb_reporter = PbProgressReporter::default();
 
     // TODO(ssoudan) do better
-    let loss_estimation_steps = valid_dataloader.n_batches();
-    let steps_between_loss_estimation = 3000;
+    let loss_estimation_steps = 150;
+    let steps_between_loss_estimation = 750;
 
     let learn_config = LearnConfig {
         n_epochs,

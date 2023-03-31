@@ -7,7 +7,7 @@ use nanogptrs::model::{loss, LMModel, NanoGptConfig};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use tch::nn::OptimizerConfig;
-use tch::{autocast, Tensor};
+use tch::Tensor;
 
 // TODO(ssoudan): Tensorboard?
 // TODO(ssoudan): Pre-layer norm?
@@ -239,9 +239,8 @@ fn main() {
     let decoded = vocab.decode(&ys);
     println!("decoded: {}", decoded);
 
-    // half precision training
     // TODO(ssoudan) support half precision training
-    vs.float();
+    // vs.float();
     // vs.trainable_variables().iter().for_each(|t| {
     //     println!("t: {:?}", t);
     // });
@@ -324,70 +323,67 @@ fn learn<R: Rng>(
 
     train_dataloader.shuffle(&mut rng);
 
-    autocast(true, || {
-        // train the model
-        let mut opt = tch::nn::Adam::default().build(vs, lr).unwrap();
+    // autocast(true, || {
+    // train the model
+    let mut opt = tch::nn::Adam::default().build(vs, lr).unwrap();
 
-        pb_reporter.train_start(steps_between_loss_estimation);
+    pb_reporter.train_start(steps_between_loss_estimation);
 
-        // work in terms of steps and not epochs
-        for i in 0..n_steps {
-            // get a batch - reshuffle if necessary
-            let (xs, ys) = if let Some((xs, ys)) = train_dataloader.next_batch() {
-                (xs, ys)
-            } else {
-                train_dataloader.shuffle(&mut rng);
-                train_dataloader.next_batch().unwrap()
-            };
+    // work in terms of steps and not epochs
+    for i in 0..n_steps {
+        // get a batch - reshuffle if necessary
+        let (xs, ys) = if let Some((xs, ys)) = train_dataloader.next_batch() {
+            (xs, ys)
+        } else {
+            train_dataloader.shuffle(&mut rng);
+            train_dataloader.next_batch().unwrap()
+        };
 
-            let logits = model.forward_t(&xs, true);
+        let logits = model.forward_t(&xs, true);
 
-            let loss_value = loss(&logits, &ys);
+        let loss_value = loss(&logits, &ys);
 
-            // opt.backward_step(&loss);
-            opt.zero_grad();
-            loss_value.backward();
-            if let Some(max_grad_norm) = max_grad_norm {
-                opt.clip_grad_norm(max_grad_norm);
-            }
-            opt.step();
+        // opt.backward_step(&loss);
+        opt.zero_grad();
+        loss_value.backward();
+        if let Some(max_grad_norm) = max_grad_norm {
+            opt.clip_grad_norm(max_grad_norm);
+        }
+        opt.step();
 
-            if i % 10 == 0 {
-                pb_reporter.train_progress(i % steps_between_loss_estimation);
-                pb_reporter.epoch_progress(i);
-            }
+        if i % 10 == 0 {
+            pb_reporter.train_progress(i % steps_between_loss_estimation);
+            pb_reporter.epoch_progress(i);
+        }
 
-            if (i % steps_between_loss_estimation == 0 && i != 0) || i == n_steps - 1 {
-                pb_reporter.train_end();
+        if (i % steps_between_loss_estimation == 0 && i != 0) || i == n_steps - 1 {
+            pb_reporter.train_end();
 
-                // loss estimation pb_reporter.estimate_start();
-                pb_reporter.estimate_start();
+            // loss estimation pb_reporter.estimate_start();
+            pb_reporter.estimate_start();
 
-                // Reshuffle the batches
-                train_dataloader_loss.shuffle(&mut rng);
-                valid_dataloader_loss.shuffle(&mut rng);
+            // Reshuffle the batches
+            train_dataloader_loss.shuffle(&mut rng);
+            valid_dataloader_loss.shuffle(&mut rng);
 
-                let mut estimator = LossEstimator::new(
-                    &mut train_dataloader_loss,
-                    &mut valid_dataloader_loss,
-                    loss,
-                );
-                let loss_estimates = estimator.estimate_loss(
-                    model.as_ref(),
-                    loss_estimation_steps, /* use the same number of batches for training and
-                                            * validation */
-                    loss_estimation_steps,
-                    pb_reporter,
-                );
+            let mut estimator =
+                LossEstimator::new(&mut train_dataloader_loss, &mut valid_dataloader_loss, loss);
+            let loss_estimates = estimator.estimate_loss(
+                model.as_ref(),
+                loss_estimation_steps, /* use the same number of batches for training and
+                                        * validation */
+                loss_estimation_steps,
+                pb_reporter,
+            );
 
-                pb_reporter.estimate_end(loss_estimates);
+            pb_reporter.estimate_end(loss_estimates);
 
-                if i != n_steps - 1 {
-                    pb_reporter.train_start(steps_between_loss_estimation);
-                }
+            if i != n_steps - 1 {
+                pb_reporter.train_start(steps_between_loss_estimation);
             }
         }
-    });
+    }
+    // });
 
     pb_reporter.epoch_end();
 }

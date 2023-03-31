@@ -1,8 +1,8 @@
-# nanoGPT rs
+# nanoGPT(rs)
 
-More or less what this video is about: https://www.youtube.com/watch?v=kCc8FmEb1nY&t=12s 
-With some help from: https://github.com/LaurentMazare/tch-rs/blob/main/examples/min-gpt/main.rs
-and: https://github.com/karpathy/nanoGPT/blob/master/model.py 
+More or less what this video is about: https://www.youtube.com/watch?v=kCc8FmEb1nY&t=12s
+
+With some help from: https://github.com/LaurentMazare/tch-rs/blob/main/examples/min-gpt/main.rs and https://github.com/karpathy/nanoGPT/blob/master/model.py. 
 
 # Setup
 
@@ -28,7 +28,7 @@ ls -l torch
 cargo run --release -- --device=cuda --n-epochs=3 nano-gpt
 ```
 
-Should eventually produce something like this:
+Should eventually (~5h on my Titan XP) produce something like this:
 
 ```
 DUCHESS OF YORK:

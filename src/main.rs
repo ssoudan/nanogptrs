@@ -307,7 +307,7 @@ fn learn<R: Rng>(
 
         pb_reporter.train_start(steps_between_loss_estimation);
 
-        // work in term of steps and not epochs
+        // work in terms of steps and not epochs
         for i in 0..n_steps {
             // get a batch - reshuffle if necessary
             let (xs, ys) = if let Some((xs, ys)) = train_dataloader.next_batch() {

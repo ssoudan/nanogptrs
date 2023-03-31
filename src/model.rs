@@ -13,7 +13,7 @@ pub struct BigramLanguageModel {
 
 impl BigramLanguageModel {
     /// Create a new BigramLanguageModel
-    pub fn new(vs: &nn::Path, vocab_size: i64) -> Self {
+    pub fn new(vs: &Path, vocab_size: i64) -> Self {
         let embedding = nn::embedding(vs / "embedding", vocab_size, vocab_size, Default::default());
 
         Self { embedding }
@@ -42,7 +42,7 @@ impl LMModel for BigramLanguageModel {
     }
 }
 
-impl nn::ModuleT for BigramLanguageModel {
+impl ModuleT for BigramLanguageModel {
     fn forward_t(&self, xs: &Tensor, _train: bool) -> Tensor {
         self.forward(xs)
     }
@@ -121,7 +121,7 @@ impl Head {
     }
 }
 
-impl nn::ModuleT for Head {
+impl ModuleT for Head {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let (b, t, _c) = xs.size3().unwrap();
         let head_size = self.head_size;
@@ -220,7 +220,7 @@ impl MultiHeadSelfAttention {
     }
 }
 
-impl nn::ModuleT for MultiHeadSelfAttention {
+impl ModuleT for MultiHeadSelfAttention {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // concatenate the heads along the last dimension
         let heads = self
@@ -238,7 +238,7 @@ impl nn::ModuleT for MultiHeadSelfAttention {
 /// Feed forward layer
 #[derive(Debug)]
 struct FeedForward {
-    net: nn::SequentialT,
+    net: SequentialT,
 }
 
 impl FeedForward {
@@ -265,7 +265,7 @@ impl FeedForward {
     }
 }
 
-impl nn::ModuleT for FeedForward {
+impl ModuleT for FeedForward {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         self.net.forward_t(xs, train)
     }
@@ -446,7 +446,7 @@ impl Block {
     }
 }
 
-impl nn::ModuleT for Block {
+impl ModuleT for Block {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // SA heads with residual connection
         let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train);
@@ -501,7 +501,7 @@ impl NanoGpt {
     /// * `config` - The model configuration. See [NanoGptConfig].
     /// # Returns
     /// A new NanoGpt.
-    pub fn new(vs: &nn::Path, config: NanoGptConfig) -> Self {
+    pub fn new(vs: &Path, config: NanoGptConfig) -> Self {
         let block_config = BlockConfig::from(&config);
 
         let NanoGptConfig {
@@ -552,7 +552,7 @@ impl NanoGpt {
     }
 }
 
-impl nn::ModuleT for NanoGpt {
+impl ModuleT for NanoGpt {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let (b, t) = xs.size2().unwrap();
 
@@ -623,7 +623,7 @@ impl LMModel for NanoGpt {
 }
 
 /// LMModel is a language model.
-pub trait LMModel: nn::ModuleT {
+pub trait LMModel: ModuleT {
     /// Generate a sequence of tokens from a starting sequence of tokens
     /// and a maximum length.
     ///

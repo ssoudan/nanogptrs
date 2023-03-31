@@ -132,6 +132,30 @@ impl nn::ModuleT for Head {
     }
 }
 
+/// Configuration for the MultiHeadSelfAttention layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MultiHeadSelfAttentionConfig {
+    /// The maximum sequence length.
+    pub block_size: i64,
+    /// The embedding size.
+    pub n_embd: i64,
+    /// The size of the head.
+    pub head_size: i64,
+    /// The number of heads.
+    pub n_head: i64,
+}
+
+impl From<&BlockConfig> for MultiHeadSelfAttentionConfig {
+    fn from(config: &BlockConfig) -> Self {
+        Self {
+            block_size: config.block_size,
+            n_embd: config.n_embd,
+            head_size: config.head_size,
+            n_head: config.n_head,
+        }
+    }
+}
+
 /// MultiHeadSelfAttention is a multi-head self-attention layer.
 #[derive(Debug)]
 pub struct MultiHeadSelfAttention {
@@ -143,20 +167,17 @@ impl MultiHeadSelfAttention {
     /// Create a new MultiHeadSelfAttention.
     /// # Arguments
     /// * `vs` - The path to the module.
-    /// * `block_size` - The maximum sequence length.
-    /// * `n_emb` - The embedding size.
-    /// * `head_size` - The size of the head.
-    /// * `n_head` - The number of heads.
+    /// * `config` - The configuration. See [`MultiHeadSelfAttentionConfig`].
     /// # Returns
     /// A new MultiHeadSelfAttention.
-    pub fn new<'a, T: Borrow<Path<'a>>>(
-        vs: T,
-        block_size: i64,
-        n_emb: i64,
-        head_size: i64,
-        n_head: i64,
-    ) -> Self {
-        // TODO(ssoudan) config to deal with n_head, head_size, n_emb, block_size...
+    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: MultiHeadSelfAttentionConfig) -> Self {
+        let MultiHeadSelfAttentionConfig {
+            block_size,
+            n_embd: n_emb,
+            head_size,
+            n_head,
+        } = config;
+
         let vs = vs.borrow();
 
         let heads = (0..n_head)
@@ -211,6 +232,30 @@ impl nn::ModuleT for FeedForward {
     }
 }
 
+/// Block configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BlockConfig {
+    /// The maximum sequence length.
+    pub block_size: i64,
+    /// The embedding size.
+    pub n_embd: i64,
+    /// The size of the head.
+    pub head_size: i64,
+    /// The number of heads.
+    pub n_head: i64,
+}
+
+impl From<&NanoGptConfig> for BlockConfig {
+    fn from(config: &NanoGptConfig) -> Self {
+        Self {
+            block_size: config.block_size,
+            n_embd: config.n_embd,
+            head_size: config.n_embd / config.n_head,
+            n_head: config.n_head,
+        }
+    }
+}
+
 /// A Block is a transformer decoder block.
 #[derive(Debug)]
 struct Block {
@@ -229,28 +274,27 @@ impl Block {
     ///
     /// # Arguments
     /// * `vs` - The path to the module.
-    /// * `block_size` - The maximum sequence length.
-    /// * `n_emb` - The embedding size.
-    /// * `n_head` - The number of heads.
+    /// * `config` - The configuration. See [`BlockConfig`].
     ///
     /// # Returns
     /// A new Block.
     ///
     /// # Notes
-    /// `n_emb` must be divisible by `n_head`.
-    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, block_size: i64, n_emb: i64, n_head: i64) -> Self {
+    /// `n_embd` must be divisible by `n_head`.
+    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: BlockConfig) -> Self {
         let vs = vs.borrow();
 
-        assert!(n_emb % n_head == 0, "n_emb must be divisible by n_head");
+        let mhsa_config = MultiHeadSelfAttentionConfig::from(&config);
 
-        let head_size = n_emb / n_head;
+        let BlockConfig { n_embd, n_head, .. } = config;
 
-        let sa_heads =
-            MultiHeadSelfAttention::new(vs / "sa_heads", block_size, n_emb, head_size, n_head);
-        let ffwd = FeedForward::new(vs / "ffwd", n_emb);
+        assert_eq!(n_embd % n_head, 0, "n_emb must be divisible by n_head");
 
-        let ln1 = nn::layer_norm(vs / "ln1", vec![n_emb], Default::default());
-        let ln2 = nn::layer_norm(vs / "ln2", vec![n_emb], Default::default());
+        let sa_heads = MultiHeadSelfAttention::new(vs / "sa_heads", mhsa_config);
+        let ffwd = FeedForward::new(vs / "ffwd", n_embd);
+
+        let ln1 = nn::layer_norm(vs / "ln1", vec![n_embd], Default::default());
+        let ln2 = nn::layer_norm(vs / "ln2", vec![n_embd], Default::default());
 
         Self {
             sa_heads,
@@ -264,10 +308,10 @@ impl Block {
 impl nn::ModuleT for Block {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // SA heads with residual connection
-        let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train); // [b, t, n_emb]
+        let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train); // [b, t, n_embd]
 
         // Feed forward layer with residual connection
-        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.ffwd, train) // [b, t, n_emb]
+        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.ffwd, train) // [b, t, n_embd]
     }
 }
 
@@ -292,16 +336,39 @@ pub struct NanoGpt {
     ln: nn::LayerNorm,
 }
 
+/// NanoGpt configuration.
+#[derive(Debug, Clone)]
+pub struct NanoGptConfig {
+    /// The vocabulary size.
+    pub vocab_size: i64,
+    /// The maximum sequence length.
+    pub block_size: i64,
+    /// The embedding size.
+    pub n_embd: i64,
+    /// The number of heads.
+    pub n_head: i64,
+    /// The number of layers.
+    pub n_layer: i64,
+}
+
 impl NanoGpt {
     /// Create a new NanoGpt
-    pub fn new(
-        vs: &nn::Path,
-        vocab_size: i64,
-        block_size: i64,
-        n_embd: i64,
-        n_head: i64,
-        n_layer: i64,
-    ) -> Self {
+    /// # Arguments
+    /// * `vs` - The path to the module.
+    /// * `config` - The model configuration. See [NanoGptConfig].
+    /// # Returns
+    /// A new NanoGpt.
+    pub fn new(vs: &nn::Path, config: NanoGptConfig) -> Self {
+        let block_config = BlockConfig::from(&config);
+
+        let NanoGptConfig {
+            vocab_size,
+            block_size,
+            n_embd,
+            n_layer,
+            ..
+        } = config;
+
         let token_embedding =
             nn::embedding(vs / "embedding", vocab_size, n_embd, Default::default());
 
@@ -314,7 +381,7 @@ impl NanoGpt {
 
         let mut layers = nn::seq_t();
         for i in 0..n_layer {
-            layers = layers.add(Block::new(vs / i, block_size, n_embd, n_head));
+            layers = layers.add(Block::new(vs / i, block_config));
         }
 
         let lm_head = nn::linear(vs / "lm_head", n_embd, vocab_size, Default::default());
@@ -442,7 +509,7 @@ mod tests {
         let block_size = 5;
 
         let model = BigramLanguageModel::new(&vs.root(), vocab_size);
-        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int64);
+        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
@@ -487,8 +554,16 @@ mod tests {
         let n_head = 4;
         let n_layer = 2;
 
-        let model = NanoGpt::new(&vs.root(), vocab_size, block_size, n_embd, n_head, n_layer);
-        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int64);
+        let config = NanoGptConfig {
+            vocab_size,
+            block_size,
+            n_embd,
+            n_head,
+            n_layer,
+        };
+
+        let model = NanoGpt::new(&vs.root(), config);
+        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
@@ -512,8 +587,16 @@ mod tests {
         let n_head = 4;
         let n_layer = 2;
 
-        let model = NanoGpt::new(&vs.root(), vocab_size, block_size, n_embd, n_head, n_layer);
-        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5]).to_kind(tch::Kind::Int64);
+        let config = NanoGptConfig {
+            vocab_size,
+            block_size,
+            n_embd,
+            n_head,
+            n_layer,
+        };
+
+        let model = NanoGpt::new(&vs.root(), config);
+        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size - 2]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
@@ -536,8 +619,16 @@ mod tests {
         let n_head = 4;
         let n_layer = 2;
 
-        let model = NanoGpt::new(&vs.root(), vocab_size, block_size, n_embd, n_head, n_layer);
-        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int64);
+        let config = NanoGptConfig {
+            vocab_size,
+            block_size,
+            n_embd,
+            n_head,
+            n_layer,
+        };
+
+        let model = NanoGpt::new(&vs.root(), config);
+        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
@@ -552,14 +643,14 @@ mod tests {
         // we expect the loss to be close to -ln(1/vocab_size) = 4.17
 
         // use 0 as start of sequence token - this is '\n' with our data and tokenizer.
-        let xs = Tensor::zeros(&[batch_size, 1], (tch::Kind::Int64, tch::Device::Cpu));
+        let xs = Tensor::zeros(&[batch_size, 1], (tch::Kind::Int, tch::Device::Cpu));
         println!("xs: {:?}", xs);
         let max_len = 10;
         let ys = model.generate(xs, max_len);
         println!("generated: {:?}", ys);
 
         // decode the generated sequence of tokens
-        let ys = ys.to_kind(tch::Kind::Int64);
+        let ys = ys.to_kind(tch::Kind::Int);
 
         println!("generated: {:?}", ys);
 

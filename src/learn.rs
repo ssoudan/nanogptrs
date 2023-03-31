@@ -13,7 +13,8 @@ pub struct PbProgressReporter {
     estimate_bar: Option<ProgressBar>,
     estimate_train_bar: Option<ProgressBar>,
     estimate_valid_bar: Option<ProgressBar>,
-    current_epoch: usize,
+    current_epoch: f32,
+    batches_per_epoch: usize,
     train_loss: f64,
     valid_loss: f64,
 }
@@ -28,7 +29,8 @@ impl Default for PbProgressReporter {
             estimate_bar: None,
             estimate_train_bar: None,
             estimate_valid_bar: None,
-            current_epoch: 0,
+            current_epoch: 0.,
+            batches_per_epoch: 0,
             train_loss: 0.0,
             valid_loss: 0.0,
         }
@@ -36,82 +38,99 @@ impl Default for PbProgressReporter {
 }
 
 impl ProgressReporter for PbProgressReporter {
-    fn epoch_start(&mut self, n_epochs: usize) {
-        let epoch_bar = self.mb.add(ProgressBar::new(n_epochs as u64));
+    fn epoch_start(&mut self, n_epochs: usize, batches_per_epochs: usize) {
+        let epoch_bar = self
+            .mb
+            .add(ProgressBar::new((n_epochs * batches_per_epochs) as u64));
         epoch_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} MASTER   {bar:40.cyan/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .template("{spinner:.green} MASTER   {bar:20.cyan/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}, Epoch {epoch_progress}] {msg}")
                 .unwrap()
                 .with_key("per_sec_short", 
                           |state: &ProgressState, w: &mut dyn Write|
-                              write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                              write!(w, "{:>7.1}/s", state.per_sec()).unwrap())
+                .with_key("epoch_progress", 
+                          move |state: &ProgressState, w: &mut dyn Write|
+                              write!(w, "{:>4.1}/{}",  state.pos() as f32/batches_per_epochs as f32, n_epochs).unwrap()
+                          )
                 .progress_chars("##-"),
         );
+
         epoch_bar.tick();
         self.epoch_bar = Some(epoch_bar);
-        self.current_epoch = 0;
+        self.current_epoch = 0.;
+        self.batches_per_epoch = batches_per_epochs;
     }
-    fn epoch_progress(&mut self, current_epoch: usize) {
+
+    fn epoch_progress(&mut self, current_batch: usize) {
         if let Some(epoch_bar) = &self.epoch_bar {
-            epoch_bar.set_position(current_epoch as u64);
+            epoch_bar.set_position(current_batch as u64);
         }
-        self.current_epoch = current_epoch;
+
+        self.current_epoch = current_batch as f32 / self.batches_per_epoch as f32;
     }
+
     fn epoch_end(&mut self) {
         if let Some(epoch_bar) = &self.epoch_bar {
             epoch_bar.finish_and_clear();
         }
         self.epoch_bar = None;
     }
+
     fn train_start(&mut self, n_train_batches: usize) {
         let train_bar = self.mb.add(ProgressBar::new(n_train_batches as u64));
         train_bar.set_style(
             ProgressStyle::default_bar()
 
-                .template("{spinner:.green} TRAINING {bar:40.green/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .template("{spinner:.green} TRAINING {bar:20.green/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
                 .unwrap()
                 .with_key("per_sec_short", 
                                    |state: &ProgressState, w: &mut dyn Write|
-                                       write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                                       write!(w, "{:>7.1}/s", state.per_sec()).unwrap())
                 .progress_chars("##-"));
-        train_bar.set_message(format!("Epoch {}", self.current_epoch));
+        train_bar.tick();
         self.train_bar = Some(train_bar);
     }
+
     fn train_progress(&mut self, current_train_batches: usize) {
         if let Some(train_bar) = &self.train_bar {
             train_bar.set_position(current_train_batches as u64);
         }
     }
+
     fn train_end(&mut self) {
         if let Some(train_bar) = &self.train_bar {
-            train_bar.finish();
+            train_bar.finish_and_clear();
         }
         self.train_bar = None;
     }
+
     fn estimate_start(&mut self) {
         let estimate_bar = self.mb.add(ProgressBar::new(2));
         estimate_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} EVAL     {bar:40.magenta/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .template("{spinner:.green} EVAL     {bar:20.magenta/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
                 .unwrap().with_key("per_sec_short",
                                    |state: &ProgressState, w: &mut dyn Write|
-                                       write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                                       write!(w, "{:>7.1}/s", state.per_sec()).unwrap())
                 .progress_chars("##-"));
-        estimate_bar.set_message(format!("Estimating epoch {}", self.current_epoch));
+        estimate_bar.tick();
         self.estimate_bar = Some(estimate_bar);
     }
+
     fn estimate_progress(&mut self) {
         if let Some(estimate_bar) = &self.estimate_bar {
             estimate_bar.inc(1);
         }
     }
+
     fn estimate_end(&mut self, loss_estimates: LossEstimates) {
         if let Some(estimate_bar) = &self.estimate_bar {
             estimate_bar.set_message(format!(
-                "Epoch {} Train loss: {:.4}, Valid loss: {:.4}",
+                "Epoch {:>4.1}, Train loss: {:.4}, Valid loss: {:.4}",
                 self.current_epoch, loss_estimates.train_loss, loss_estimates.valid_loss
             ));
-            estimate_bar.finish();
+            estimate_bar.finish(); // keep the bar
         }
         self.estimate_bar = None;
     }
@@ -120,7 +139,7 @@ impl ProgressReporter for PbProgressReporter {
 /// A trait for reporting progress during training.
 pub trait ProgressReporter {
     /// Called before epoch starts.
-    fn epoch_start(&mut self, n_epochs: usize);
+    fn epoch_start(&mut self, n_epochs: usize, batches_per_epochs: usize);
     /// Called when an epoch ends.
     fn epoch_progress(&mut self, current_epoch: usize);
     /// Called when all epochs have been processed.
@@ -146,33 +165,30 @@ impl estimate::ProgressReporter for PbProgressReporter {
         let train_loss_bar = self.mb.add(ProgressBar::new(total_train_batches as u64));
         train_loss_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green}        T {bar:40.yellow/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .template("{spinner:.green}        T {bar:20.yellow/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
                 .unwrap().with_key("per_sec_short",
                                    |state: &ProgressState, w: &mut dyn Write|
-                                       write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                                       write!(w, "{:>7.1}/s", state.per_sec()).unwrap())
                 .progress_chars("##-"));
 
-        if let Some(estimate_bar) = &self.estimate_bar {
-            estimate_bar.set_message("Train loss estimation");
-        }
         self.estimate_train_bar = Some(train_loss_bar);
     }
 
     fn train_loss_progress(&mut self, current_train_batches: usize) {
-        if let Some(train_loss_bar) = &self.estimate_train_bar {
-            train_loss_bar.set_position(current_train_batches as u64);
+        if let Some(estimate_train_bar) = &self.estimate_train_bar {
+            estimate_train_bar.set_position(current_train_batches as u64);
         }
     }
 
     fn train_loss_end(&mut self, train_loss: f64) {
-        if let Some(train_loss_bar) = &self.estimate_train_bar {
-            train_loss_bar.finish_and_clear();
+        if let Some(estimate_train_bar) = &self.estimate_train_bar {
+            estimate_train_bar.finish_and_clear();
         }
         self.estimate_train_bar = None;
 
         if let Some(estimate_bar) = &self.estimate_bar {
             estimate_bar.set_message(format!(
-                "Epoch {} Train loss: {:.4}",
+                "Epoch {:>4.1}, Train loss: {:.4}",
                 self.current_epoch, train_loss
             ));
         }
@@ -187,29 +203,29 @@ impl estimate::ProgressReporter for PbProgressReporter {
         let valid_loss_bar = self.mb.add(ProgressBar::new(total_valid_batches as u64));
         valid_loss_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green}        E {bar:40.yellow/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
+                .template("{spinner:.green}        E {bar:20.yellow/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}] {msg}")
                 .unwrap().with_key("per_sec_short",
                                    |state: &ProgressState, w: &mut dyn Write|
-                                       write!(w, "{:.1}/s", state.per_sec()).unwrap())
+                                       write!(w, "{:>7.1}/s", state.per_sec()).unwrap())
                 .progress_chars("##-"));
         self.estimate_valid_bar = Some(valid_loss_bar);
     }
 
     fn valid_loss_progress(&mut self, current_valid_batches: usize) {
-        if let Some(valid_loss_bar) = &self.estimate_valid_bar {
-            valid_loss_bar.set_position(current_valid_batches as u64);
+        if let Some(estimate_valid_bar) = &self.estimate_valid_bar {
+            estimate_valid_bar.set_position(current_valid_batches as u64);
         }
     }
 
     fn valid_loss_end(&mut self, valid_loss: f64) {
-        if let Some(valid_loss_bar) = &self.estimate_valid_bar {
-            valid_loss_bar.finish_and_clear();
+        if let Some(estimate_valid_bar) = &self.estimate_valid_bar {
+            estimate_valid_bar.finish_and_clear();
         }
         self.estimate_valid_bar = None;
 
         if let Some(estimate_bar) = &self.estimate_bar {
             estimate_bar.set_message(format!(
-                "Epoch {} Train loss: {:.4}, valid loss: {:.4}",
+                "Epoch {:>4.1}, Train loss: {:.4}, valid loss: {:.4}",
                 self.current_epoch, self.train_loss, valid_loss
             ));
         }

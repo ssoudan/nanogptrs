@@ -59,11 +59,20 @@ pub struct TokenizedData {
     vocab: Vocab,
 }
 
+impl Clone for TokenizedData {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.copy(),
+            vocab: self.vocab.clone(),
+        }
+    }
+}
+
 impl TokenizedData {
     /// Create a new tokenized data from a string and a vocabulary
-    pub fn new(data: &str, vocab: Vocab, device: Device) -> Self {
+    pub fn new(data: &str, vocab: Vocab, device: Device, kind: tch::Kind) -> Self {
         let data = vocab.encode(data);
-        let data = Tensor::of_slice(&data).to_device(device);
+        let data = Tensor::of_slice(&data).to_device(device).to_kind(kind);
 
         Self { data, vocab }
     }
@@ -109,6 +118,7 @@ type Batch = (Tensor, Tensor);
 /// - batch 1: (tensor([[0, 1, 2], [3, 4, 5]]), tensor([[1, 2, 3], [4, 5, 6]]))
 /// - batch 2: (tensor([[6, 7, 8], [9, 10, 11]]), tensor([[7, 8, 9], [10, 11, 12]]))
 ///
+#[derive(Clone)]
 pub struct Loader {
     data: TokenizedData,
     batch_size: usize,
@@ -125,8 +135,14 @@ pub struct Loader {
 
 impl Loader {
     /// Create a new data loader from a string and a vocabulary
-    pub fn new(data: &str, block_size: usize, batch_size: usize, device: Device) -> Self {
-        let tokenized_data = TokenizedData::new(data, Vocab::new(data), device);
+    pub fn new(
+        data: &str,
+        block_size: usize,
+        batch_size: usize,
+        device: Device,
+        kind: tch::Kind,
+    ) -> Self {
+        let tokenized_data = TokenizedData::new(data, Vocab::new(data), device, kind);
         // The number of unique sequences of length `block_size+1` in the data
         let n_samples = tokenized_data.len() - block_size;
         // The number of (complete) batches
@@ -250,16 +266,17 @@ mod tests {
         let data = "abcdefg";
         let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu);
+        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu, tch::Kind::Int64);
 
         assert_eq!(loader.n_samples(), 4);
         assert_eq!(loader.n_batches(), 2);
 
         let (samples, targets) = loader.next_batch().unwrap();
-
+        assert_eq!(samples.kind(), tch::Kind::Int64);
         assert_eq!(samples, to_tensor(vec![vec![0, 1, 2], vec![1, 2, 3]]));
         assert_eq!(targets, to_tensor(vec![vec![1, 2, 3], vec![2, 3, 4]]));
         let (samples, targets) = loader.next_batch().unwrap();
+        assert_eq!(samples.kind(), tch::Kind::Int64);
         assert_eq!(samples, to_tensor(vec![vec![2, 3, 4], vec![3, 4, 5]]));
         assert_eq!(targets, to_tensor(vec![vec![3, 4, 5], vec![4, 5, 6]]));
     }
@@ -277,12 +294,13 @@ mod tests {
         let data = "abcdef";
         let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu);
+        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu, tch::Kind::Int);
 
         assert_eq!(loader.n_samples(), 3);
         assert_eq!(loader.n_batches(), 1);
 
         let (samples, targets) = loader.next_batch().unwrap();
+        assert_eq!(samples.kind(), tch::Kind::Int);
         assert_eq!(samples, to_tensor(vec![vec![0, 1, 2], vec![1, 2, 3]]));
         assert_eq!(targets, to_tensor(vec![vec![1, 2, 3], vec![2, 3, 4]]));
         assert!(loader.next_batch().is_none());
@@ -301,7 +319,7 @@ mod tests {
         let data = "abcdefg";
         let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu);
+        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu, tch::Kind::Int);
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(123);
 
         loader.shuffle(&mut rng);
@@ -310,9 +328,11 @@ mod tests {
         assert_eq!(loader.n_batches(), 2);
 
         let (samples, targets) = loader.next_batch().unwrap();
+        assert_eq!(samples.kind(), tch::Kind::Int);
         assert_eq!(samples, to_tensor(vec![vec![1, 2, 3], vec![0, 1, 2]]));
         assert_eq!(targets, to_tensor(vec![vec![2, 3, 4], vec![1, 2, 3]]));
         let (samples, targets) = loader.next_batch().unwrap();
+        assert_eq!(samples.kind(), tch::Kind::Int);
         assert_eq!(samples, to_tensor(vec![vec![2, 3, 4], vec![3, 4, 5]]));
         assert_eq!(targets, to_tensor(vec![vec![3, 4, 5], vec![4, 5, 6]]));
         assert!(loader.next_batch().is_none());

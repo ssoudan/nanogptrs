@@ -3,13 +3,13 @@ use clap::{Parser, Subcommand, ValueEnum};
 use nanogptrs::data::{load_file, Loader, TokenizedData, Vocab};
 use nanogptrs::estimate::LossEstimator;
 use nanogptrs::learn::{PbProgressReporter, ProgressReporter};
-use nanogptrs::model::{loss, LMModel};
+use nanogptrs::model::{loss, LMModel, NanoGptConfig};
+use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use tch::nn::OptimizerConfig;
-use tch::Tensor;
+use tch::{autocast, Tensor};
 
 // TODO(ssoudan): Tensorboard?
-// TODO(ssoudan): FP precision
 // TODO(ssoudan): Count the number of parameters
 
 /// Torch device to use.
@@ -152,8 +152,10 @@ fn main() {
     println!("train_data.len(): {}", train_data.len());
     println!("valid_data.len(): {}", valid_data.len());
 
-    let train_data = TokenizedData::new(train_data, vocab.clone(), device);
-    let valid_data = TokenizedData::new(valid_data, vocab.clone(), device);
+    let kind = tch::Kind::Int;
+
+    let train_data = TokenizedData::new(train_data, vocab.clone(), device, kind);
+    let valid_data = TokenizedData::new(valid_data, vocab.clone(), device, kind);
 
     let mut train_dataloader = Loader::from_tokenized_data(train_data, block_size, batch_size);
     let mut valid_dataloader = Loader::from_tokenized_data(valid_data, block_size, batch_size);
@@ -175,21 +177,23 @@ fn main() {
 
     ///////
 
-    let vs = tch::nn::VarStore::new(device);
+    let mut vs = tch::nn::VarStore::new(device);
 
     let model: Box<dyn LMModel> = match args.model.unwrap_or_default() {
         Model::NanoGpt(NanoGptArgs {
             n_embd,
             n_layer,
             n_head,
-        }) => Box::new(nanogptrs::model::NanoGpt::new(
-            &vs.root(),
-            vocab.size() as i64,
-            block_size as i64,
-            n_embd,
-            n_head,
-            n_layer,
-        )),
+        }) => {
+            let config = NanoGptConfig {
+                vocab_size: vocab.size() as i64,
+                block_size: block_size as i64,
+                n_embd,
+                n_head,
+                n_layer,
+            };
+            Box::new(nanogptrs::model::NanoGpt::new(&vs.root(), config))
+        }
         Model::BigramLanguageModel => Box::new(nanogptrs::model::BigramLanguageModel::new(
             &vs.root(),
             vocab.size() as i64,
@@ -213,12 +217,9 @@ fn main() {
     let decoded = vocab.decode(&ys);
     println!("decoded: {}", decoded);
 
-    // train the model
-    let mut opt = tch::nn::Adam::default().build(&vs, lr).unwrap();
-
     // half precision training
     // TODO(ssoudan) support half precision training
-    // vs.half();
+    vs.float();
     // vs.trainable_variables().iter().for_each(|t| {
     //     println!("t: {:?}", t);
     // });
@@ -230,64 +231,26 @@ fn main() {
     // Initialize the progress bars
     let mut pb_reporter = PbProgressReporter::default();
 
-    pb_reporter.epoch_start(n_epochs);
-    for epoch in 0..n_epochs {
-        let mut train_n = 0;
+    // TODO(ssoudan) do better
+    let loss_estimation_steps = valid_dataloader.n_batches();
+    let steps_between_loss_estimation = 3000;
 
-        pb_reporter.train_start(train_dataloader.n_batches());
+    let learn_config = LearnConfig {
+        n_epochs,
+        lr,
+        steps_between_loss_estimation,
+        loss_estimation_steps,
+    };
 
-        train_dataloader.shuffle(&mut rng);
-        while let Some((xs, ys)) = train_dataloader.next_batch() {
-            // let xs: Vec<i64> = xs.into_iter().flatten().collect();
-            // let ys: Vec<i64> = ys.into_iter().flatten().collect();
-            //
-            // let xs = Tensor::of_slice(&xs)
-            //     .to_kind(tch::Kind::Int64)
-            //     .to(device)
-            //     .view([batch_size as i64, block_size as i64]);
-            // let ys = Tensor::of_slice(&ys)
-            //     .to_kind(tch::Kind::Int64)
-            //     .to(device)
-            //     .view([batch_size as i64, block_size as i64]);
-
-            let logits = model.forward_t(&xs, true);
-
-            let loss = loss(&logits, &ys);
-
-            // opt.backward_step(&loss);
-            opt.zero_grad();
-            loss.backward();
-            opt.step();
-
-            train_n += 1;
-
-            if train_n % 10 == 0 {
-                pb_reporter.train_progress(train_n);
-            }
-        }
-
-        pb_reporter.train_end();
-
-        // loss estimation pb_reporter.estimate_start();
-
-        // Reshuffle the batches
-        train_dataloader.shuffle(&mut rng);
-        valid_dataloader.shuffle(&mut rng);
-
-        let iters = valid_dataloader.n_batches();
-        let mut estimator = LossEstimator::new(&mut train_dataloader, &mut valid_dataloader, loss);
-        let loss_estimates = estimator.estimate_loss(
-            model.as_ref(),
-            iters, // use the same number of batches for training and validation
-            iters,
-            &mut pb_reporter,
-        );
-
-        pb_reporter.estimate_end(loss_estimates);
-
-        pb_reporter.epoch_progress(epoch + 1);
-    }
-    pb_reporter.epoch_end();
+    learn(
+        learn_config,
+        &mut train_dataloader,
+        &mut valid_dataloader,
+        &mut rng,
+        &mut vs,
+        &model,
+        &mut pb_reporter,
+    );
 
     // generate some text
     let xs = Tensor::zeros(&[1, block_size as i64], (tch::Kind::Int64, device));
@@ -298,4 +261,104 @@ fn main() {
     let ys: Vec<i64> = ys.into();
     let decoded = vocab.decode(&ys);
     println!("decoded: {}", decoded);
+}
+
+struct LearnConfig {
+    n_epochs: usize,
+    lr: f64,
+    steps_between_loss_estimation: usize,
+    loss_estimation_steps: usize,
+}
+
+#[allow(clippy::borrowed_box)]
+fn learn<R: Rng>(
+    learn_config: LearnConfig,
+    train_dataloader: &mut Loader,
+    valid_dataloader: &mut Loader,
+    mut rng: &mut R,
+    vs: &mut tch::nn::VarStore,
+    model: &Box<dyn LMModel>,
+    pb_reporter: &mut PbProgressReporter,
+) {
+    let LearnConfig {
+        n_epochs,
+        lr,
+        steps_between_loss_estimation,
+        loss_estimation_steps,
+    } = learn_config;
+
+    // clones the dataloaders for the loss estimation
+    let mut train_dataloader_loss = train_dataloader.clone();
+    let mut valid_dataloader_loss = valid_dataloader.clone();
+
+    let batches_per_epoch = train_dataloader.n_batches();
+
+    pb_reporter.epoch_start(n_epochs, batches_per_epoch);
+
+    let n_steps = batches_per_epoch * n_epochs;
+
+    train_dataloader.shuffle(&mut rng);
+
+    autocast(true, || {
+        // train the model
+        let mut opt = tch::nn::Adam::default().build(vs, lr).unwrap();
+
+        pb_reporter.train_start(steps_between_loss_estimation);
+
+        // work in term of steps and not epochs
+        for i in 0..n_steps {
+            // get a batch - reshuffle if necessary
+            let (xs, ys) = if let Some((xs, ys)) = train_dataloader.next_batch() {
+                (xs, ys)
+            } else {
+                train_dataloader.shuffle(&mut rng);
+                train_dataloader.next_batch().unwrap()
+            };
+
+            let logits = model.forward_t(&xs, true);
+
+            let loss_value = loss(&logits, &ys);
+
+            // opt.backward_step(&loss);
+            opt.zero_grad();
+            loss_value.backward();
+            opt.step();
+
+            if i % 10 == 0 {
+                pb_reporter.train_progress(i % steps_between_loss_estimation);
+                pb_reporter.epoch_progress(i);
+            }
+
+            if (i % steps_between_loss_estimation == 0 && i != 0) || i == n_steps - 1 {
+                pb_reporter.train_end();
+
+                // loss estimation pb_reporter.estimate_start();
+                pb_reporter.estimate_start();
+
+                // Reshuffle the batches
+                train_dataloader_loss.shuffle(&mut rng);
+                valid_dataloader_loss.shuffle(&mut rng);
+
+                let mut estimator = LossEstimator::new(
+                    &mut train_dataloader_loss,
+                    &mut valid_dataloader_loss,
+                    loss,
+                );
+                let loss_estimates = estimator.estimate_loss(
+                    model.as_ref(),
+                    loss_estimation_steps, // use the same number of batches for training and validation
+                    loss_estimation_steps,
+                    pb_reporter,
+                );
+
+                pb_reporter.estimate_end(loss_estimates);
+
+                if i != n_steps - 1 {
+                    pb_reporter.train_start(steps_between_loss_estimation);
+                }
+            }
+        }
+    });
+
+    pb_reporter.epoch_end();
 }

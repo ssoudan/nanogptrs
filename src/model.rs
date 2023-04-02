@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use tch::nn::{Init, LinearConfig, ModuleT, Path, SequentialT};
+use tch::nn::ModuleT;
 use tch::{nn, IndexOp, Tensor};
 
 /// BigramLanguageModel is a language model that uses the current token to
@@ -13,7 +13,7 @@ pub struct BigramLanguageModel {
 
 impl BigramLanguageModel {
     /// Create a new BigramLanguageModel
-    pub fn new(vs: &Path, vocab_size: i64) -> Self {
+    pub fn new(vs: &nn::Path, vocab_size: i64) -> Self {
         let embedding = nn::embedding(vs / "embedding", vocab_size, vocab_size, Default::default());
 
         Self { embedding }
@@ -42,7 +42,7 @@ impl LMModel for BigramLanguageModel {
     }
 }
 
-impl ModuleT for BigramLanguageModel {
+impl nn::ModuleT for BigramLanguageModel {
     fn forward_t(&self, xs: &Tensor, _train: bool) -> Tensor {
         self.forward(xs)
     }
@@ -99,7 +99,7 @@ impl Head {
     /// # Notes
     /// The input of `forward` is expected to be of shape `[batch_size,
     /// block_size, C]`.
-    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: HeadConfig) -> Self {
+    pub fn new<'a, T: Borrow<nn::Path<'a>>>(vs: T, config: HeadConfig) -> Self {
         let HeadConfig {
             head_size,
             block_size,
@@ -116,7 +116,7 @@ impl Head {
             vs / "key",
             n_embd,
             head_size,
-            LinearConfig {
+            nn::LinearConfig {
                 bias,
                 ..Default::default()
             },
@@ -125,7 +125,7 @@ impl Head {
             vs / "query",
             n_embd,
             head_size,
-            LinearConfig {
+            nn::LinearConfig {
                 bias,
                 ..Default::default()
             },
@@ -134,7 +134,7 @@ impl Head {
             vs / "value",
             n_embd,
             head_size,
-            LinearConfig {
+            nn::LinearConfig {
                 bias,
                 ..Default::default()
             },
@@ -151,7 +151,7 @@ impl Head {
     }
 }
 
-impl ModuleT for Head {
+impl nn::ModuleT for Head {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let (b, t, _c) = xs.size3().unwrap();
         let head_size = self.head_size;
@@ -229,7 +229,7 @@ impl MultiHeadSelfAttention {
     /// * `config` - The configuration. See [`MultiHeadSelfAttentionConfig`].
     /// # Returns
     /// A new MultiHeadSelfAttention.
-    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: MultiHeadSelfAttentionConfig) -> Self {
+    pub fn new<'a, T: Borrow<nn::Path<'a>>>(vs: T, config: MultiHeadSelfAttentionConfig) -> Self {
         let MultiHeadSelfAttentionConfig {
             n_embd,
             n_head,
@@ -250,7 +250,7 @@ impl MultiHeadSelfAttention {
             vs / "projection",
             n_embd,
             n_embd,
-            LinearConfig {
+            nn::LinearConfig {
                 bias,
                 ..Default::default()
             },
@@ -264,7 +264,7 @@ impl MultiHeadSelfAttention {
     }
 }
 
-impl ModuleT for MultiHeadSelfAttention {
+impl nn::ModuleT for MultiHeadSelfAttention {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // concatenate the heads along the last dimension
         let heads = self
@@ -300,12 +300,12 @@ impl From<&BlockConfig> for FeedForwardConfig {
 /// Feed forward layer
 #[derive(Debug)]
 pub struct FeedForward {
-    net: SequentialT,
+    net: nn::SequentialT,
 }
 
 impl FeedForward {
     /// Create a new FeedForward
-    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: FeedForwardConfig) -> Self {
+    pub fn new<'a, T: Borrow<nn::Path<'a>>>(vs: T, config: FeedForwardConfig) -> Self {
         let FeedForwardConfig { n_embd, dropout } = config;
 
         let vs = vs.borrow();
@@ -329,7 +329,7 @@ impl FeedForward {
     }
 }
 
-impl ModuleT for FeedForward {
+impl nn::ModuleT for FeedForward {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         self.net.forward_t(xs, train)
     }
@@ -377,9 +377,9 @@ pub struct LayerNormConfig {
     /// Whether to apply a bias.
     pub elementwise_bias: bool,
     /// The weight initialization.
-    pub ws_init: Init,
+    pub ws_init: nn::Init,
     /// The bias initialization.
-    pub bs_init: Init,
+    pub bs_init: nn::Init,
 }
 
 impl Default for LayerNormConfig {
@@ -389,8 +389,8 @@ impl Default for LayerNormConfig {
             elementwise_bias: true,
             eps: 1e-5,
             cudnn_enabled: true,
-            ws_init: Init::Const(1.),
-            bs_init: Init::Const(0.),
+            ws_init: nn::Init::Const(1.),
+            bs_init: nn::Init::Const(0.),
         }
     }
 }
@@ -420,7 +420,7 @@ impl LayerNorm {
     /// * `config` - The configuration.
     /// # Returns
     /// The LayerNorm.
-    pub fn new<'a, T: Borrow<Path<'a>>>(
+    pub fn new<'a, T: Borrow<nn::Path<'a>>>(
         vs: T,
         normalized_shape: Vec<i64>,
         config: LayerNormConfig,
@@ -488,7 +488,7 @@ impl Block {
     ///
     /// # Notes
     /// `n_embd` must be divisible by `n_head`.
-    pub fn new<'a, T: Borrow<Path<'a>>>(vs: T, config: BlockConfig) -> Self {
+    pub fn new<'a, T: Borrow<nn::Path<'a>>>(vs: T, config: BlockConfig) -> Self {
         let vs = vs.borrow();
 
         let mhsa_config = MultiHeadSelfAttentionConfig::from(&config);
@@ -527,7 +527,7 @@ impl Block {
     }
 }
 
-impl ModuleT for Block {
+impl nn::ModuleT for Block {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // SA heads with residual connection
         let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train);
@@ -555,7 +555,7 @@ pub struct NanoGpt {
     /// The maximum sequence length
     block_size: i64,
     /// Layers
-    layers: SequentialT,
+    layers: nn::SequentialT,
     /// Layer normalization
     ln: LayerNorm,
 }
@@ -586,7 +586,7 @@ impl NanoGpt {
     /// * `config` - The model configuration. See [NanoGptConfig].
     /// # Returns
     /// A new NanoGpt.
-    pub fn new(vs: &Path, config: NanoGptConfig) -> Self {
+    pub fn new(vs: &nn::Path, config: NanoGptConfig) -> Self {
         let block_config = BlockConfig::from(&config);
 
         let NanoGptConfig {
@@ -616,7 +616,7 @@ impl NanoGpt {
             vs / "lm_head",
             n_embd,
             vocab_size,
-            LinearConfig {
+            nn::LinearConfig {
                 bias: false,
                 ..Default::default()
             },
@@ -644,7 +644,7 @@ impl NanoGpt {
     }
 }
 
-impl ModuleT for NanoGpt {
+impl nn::ModuleT for NanoGpt {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let (b, t) = xs.size2().unwrap();
 
@@ -715,7 +715,7 @@ impl LMModel for NanoGpt {
 }
 
 /// LMModel is a language model.
-pub trait LMModel: ModuleT {
+pub trait LMModel: nn::ModuleT {
     /// Generate a sequence of tokens from a starting sequence of tokens
     /// and a maximum length.
     ///
@@ -741,6 +741,8 @@ pub fn loss(logits: &Tensor, targets: &Tensor) -> Tensor {
 
 #[cfg(test)]
 mod tests {
+    use tch::nn::ModuleT;
+
     use super::*;
 
     /// Test the BigramLanguageModel

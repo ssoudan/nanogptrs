@@ -21,7 +21,7 @@ tch = { version = "0.11.0", default-features = false, features = [] }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 indicatif = { version = "0.17.3", features = ["improved_unicode"] }
-clap = { version = "4.2.1", features = ["derive"] }
+clap = { version = "4.2.3", features = ["derive"] }
 
 [dev-dependencies]
 rand_chacha = "0.3.1"

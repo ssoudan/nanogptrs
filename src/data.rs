@@ -251,7 +251,7 @@ mod tests {
         let batch_size = batches.len();
 
         let data: Vec<i64> = batches.into_iter().flatten().collect();
-        Tensor::from_slice(&data).reshape(&[batch_size as i64, -1])
+        Tensor::from_slice(&data).reshape([batch_size as i64, -1])
     }
 
     #[test]

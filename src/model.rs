@@ -139,7 +139,7 @@ impl Head {
                 ..Default::default()
             },
         );
-        let mask = Tensor::ones(&[block_size, block_size], (tch::Kind::Float, device)).tril(0);
+        let mask = Tensor::ones([block_size, block_size], (tch::Kind::Float, device)).tril(0);
         Self {
             key,
             query,
@@ -684,7 +684,7 @@ impl LMModel for NanoGpt {
         // assert_eq!(t, self.block_size);
 
         // Create a tensor of zeros to store the output
-        let outputs = xs.new_zeros(&[b, max_len], (tch::Kind::Int64, xs.device()));
+        let outputs = xs.new_zeros([b, max_len], (tch::Kind::Int64, xs.device()));
 
         let mut xs = xs;
         for i in 0..max_len {
@@ -769,7 +769,7 @@ mod tests {
         // we expect the loss to be close to -ln(1/vocab_size) = 4.17
 
         // use 0 as start of sequence token - this is '\n' with our data and tokenizer.
-        let xs = Tensor::zeros(&[batch_size, 1], (tch::Kind::Int64, tch::Device::Cpu));
+        let xs = Tensor::zeros([batch_size, 1], (tch::Kind::Int64, tch::Device::Cpu));
         let max_len = 10;
         let ys = model.generate(xs, max_len);
         println!("generated: {:?}", ys);
@@ -901,7 +901,7 @@ mod tests {
         // we expect the loss to be close to -ln(1/vocab_size) = 4.17
 
         // use 0 as start of sequence token - this is '\n' with our data and tokenizer.
-        let xs = Tensor::zeros(&[batch_size, 1], (tch::Kind::Int, tch::Device::Cpu));
+        let xs = Tensor::zeros([batch_size, 1], (tch::Kind::Int, tch::Device::Cpu));
         println!("xs: {:?}", xs);
         let max_len = 10;
         let ys = model.generate(xs, max_len);

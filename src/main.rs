@@ -229,7 +229,7 @@ fn main() {
         .sum::<i64>();
     println!("nb parameters: {}", nb_params);
 
-    let xs = Tensor::zeros(&[1, 1_i64], (tch::Kind::Int, device));
+    let xs = Tensor::zeros([1, 1_i64], (tch::Kind::Int, device));
     let max_len = 100;
     let ys = model.generate(xs, max_len);
 
@@ -274,7 +274,7 @@ fn main() {
     );
 
     // generate some text
-    let xs = Tensor::zeros(&[1, block_size as i64], (tch::Kind::Int64, device));
+    let xs = Tensor::zeros([1, block_size as i64], (tch::Kind::Int64, device));
     let max_len = 1500;
     let ys = model.generate(xs, max_len);
 

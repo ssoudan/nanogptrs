@@ -85,7 +85,7 @@ impl<'a> LossEstimator<'a> {
 
         while let Some((xs, ys)) = self.train_dataloader.next_batch() {
             let logits = model.forward_t(&xs, false);
-            train_loss += f64::from((self.loss)(&logits, &ys));
+            train_loss += f64::try_from((self.loss)(&logits, &ys)).unwrap();
             n_train_batches += 1;
 
             if n_train_batches % 10 == 0 {
@@ -104,7 +104,7 @@ impl<'a> LossEstimator<'a> {
 
         while let Some((xs, ys)) = self.valid_dataloader.next_batch() {
             let logits = model.forward_t(&xs, false);
-            valid_loss += f64::from((self.loss)(&logits, &ys));
+            valid_loss += f64::try_from((self.loss)(&logits, &ys)).unwrap();
             n_valid_batches += 1;
 
             if n_valid_batches % 10 == 0 {

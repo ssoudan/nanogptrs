@@ -72,7 +72,7 @@ impl TokenizedData {
     /// Create a new tokenized data from a string and a vocabulary
     pub fn new(data: &str, vocab: Vocab, device: Device, kind: tch::Kind) -> Self {
         let data = vocab.encode(data);
-        let data = Tensor::of_slice(&data).to_device(device).to_kind(kind);
+        let data = Tensor::from_slice(&data).to_device(device).to_kind(kind);
 
         Self { data, vocab }
     }
@@ -251,7 +251,7 @@ mod tests {
         let batch_size = batches.len();
 
         let data: Vec<i64> = batches.into_iter().flatten().collect();
-        Tensor::of_slice(&data).reshape(&[batch_size as i64, -1])
+        Tensor::from_slice(&data).reshape(&[batch_size as i64, -1])
     }
 
     #[test]

@@ -14,14 +14,14 @@ readme = "README.md"
 
 [features]
 default = []
-tch_download = ["tch/default"]
+tch_download = ["tch/download-libtorch"]
 
 [dependencies]
-tch = { version = "0.11.0", default-features = false, features = [] }
+tch = { version = "0.13.0", default-features = false, features = [] }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 indicatif = { version = "0.17.3", features = ["improved_unicode"] }
-clap = { version = "4.2.7", features = ["derive"] }
+clap = { version = "4.3.0", features = ["derive"] }
 
 [dev-dependencies]
 rand_chacha = "0.3.1"

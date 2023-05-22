@@ -754,7 +754,7 @@ mod tests {
         let block_size = 5;
 
         let model = BigramLanguageModel::new(&vs.root(), vocab_size);
-        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
+        let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
@@ -780,11 +780,11 @@ mod tests {
         println!("generated: {:?}", ys);
 
         let first = ys.i((0, ..));
-        let first: Vec<i64> = first.into();
+        let first: Vec<i64> = first.reshape(-1).try_into().unwrap();
         println!("first: {:?}", first);
 
         let second = ys.i((1, ..));
-        let second: Vec<i64> = second.into();
+        let second: Vec<i64> = second.reshape(-1).try_into().unwrap();
         println!("second: {:?}", second);
     }
 
@@ -812,7 +812,7 @@ mod tests {
         };
 
         let model = NanoGpt::new(&vs.root(), config);
-        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
+        let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
@@ -850,7 +850,7 @@ mod tests {
         };
 
         let model = NanoGpt::new(&vs.root(), config);
-        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5]).to_kind(tch::Kind::Int);
+        let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size - 2]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
@@ -886,7 +886,7 @@ mod tests {
         };
 
         let model = NanoGpt::new(&vs.root(), config);
-        let xs = Tensor::of_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
+        let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
@@ -913,11 +913,11 @@ mod tests {
         println!("generated: {:?}", ys);
 
         let first = ys.i((0, ..));
-        let first: Vec<i64> = first.into();
+        let first: Vec<i64> = first.reshape(-1).try_into().unwrap();
         println!("first: {:?}", first);
 
         let second = ys.i((1, ..));
-        let second: Vec<i64> = second.into();
+        let second: Vec<i64> = second.reshape(-1).try_into().unwrap();
         println!("second: {:?}", second);
     }
 }

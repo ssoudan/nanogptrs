@@ -279,7 +279,7 @@ fn main() {
     let ys = model.generate(xs, max_len);
 
     // decode the generated sequence of tokens
-    let ys: Vec<i64> = ys.try_into().unwrap();
+    let ys: Vec<i64> = ys.reshape(-1).try_into().unwrap();
     let decoded = vocab.decode(&ys);
     println!("decoded: {}", decoded);
 }

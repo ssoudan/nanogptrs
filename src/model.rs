@@ -1091,7 +1091,7 @@ mod tests {
 
     /// Test shared tensor for linear layer
     #[test]
-    fn test_shared_tensor_linear() {        
+    fn test_shared_tensor_linear() {
         let input_size = 10;
         let output_size = 20;
         let n = 2;

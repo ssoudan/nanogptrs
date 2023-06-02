@@ -179,7 +179,7 @@ impl nn::ModuleT for Head {
         let wei = wei.dropout(self.dropout, train);
 
         // weighted aggregation of the values
-        let out = wei.matmul(&v); // [b, t, head_size]
+        let out = wei.matmul(v); // [b, t, head_size]
         assert_eq!(out.size(), &[b, t, head_size]);
 
         out
@@ -1091,16 +1091,14 @@ mod tests {
 
     /// Test shared tensor for linear layer
     #[test]
-    fn test_shared_tensor_linear() {
-        let vs = nn::VarStore::new(tch::Device::Cpu);
-
+    fn test_shared_tensor_linear() {        
         let input_size = 10;
         let output_size = 20;
         let n = 2;
         let batch_size = 2;
 
         let shared_linear_weight = Tensor::randn(
-            &[input_size, n * output_size],
+            [input_size, n * output_size],
             (tch::Kind::Float, tch::Device::Cpu),
         );
 
@@ -1116,7 +1114,7 @@ mod tests {
 
         // Test forward pass
         let xs = Tensor::randn(
-            &[batch_size, input_size],
+            [batch_size, input_size],
             (tch::Kind::Float, tch::Device::Cpu),
         );
 

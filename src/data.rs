@@ -13,6 +13,15 @@ pub struct Vocab {
     chars: Vec<char>,
 }
 
+/// A tokenizer
+pub trait Tokenizer {
+    /// Encode a string
+    fn encode(&self, s: &str) -> Vec<i64>;
+
+    /// Decode a string
+    fn decode(&self, v: &[i64]) -> String;
+}
+
 impl Vocab {
     /// Create a new vocabulary from a string
     pub fn new(data: &str) -> Self {
@@ -32,54 +41,47 @@ impl Vocab {
         self.chars[i as usize]
     }
 
-    /// Encode a string
-    pub fn encode(&self, s: &str) -> Vec<i64> {
-        s.chars().map(|c| self.encode_char(c)).collect()
-    }
-
-    /// Decode a string
-    pub fn decode(&self, v: &[i64]) -> String {
-        v.iter().map(|&i| self.decode_char(i)).collect()
-    }
-
     /// Return the size of the vocabulary
     pub fn size(&self) -> usize {
         self.chars.len()
     }
 
-    /// Return a reference to the characters
-    pub fn chars(&self) -> &Vec<char> {
-        &self.chars
+    // Return a reference to the characters
+    // fn chars(&self) -> &Vec<char> {
+    //     &self.chars
+    // }
+}
+
+impl Tokenizer for Vocab {
+    fn encode(&self, s: &str) -> Vec<i64> {
+        s.chars().map(|c| self.encode_char(c)).collect()
+    }
+
+    fn decode(&self, v: &[i64]) -> String {
+        v.iter().map(|&i| self.decode_char(i)).collect()
     }
 }
 
 /// Tokenized data
 pub struct TokenizedData {
     data: Tensor,
-    vocab: Vocab,
 }
 
 impl Clone for TokenizedData {
     fn clone(&self) -> Self {
         Self {
             data: self.data.copy(),
-            vocab: self.vocab.clone(),
         }
     }
 }
 
 impl TokenizedData {
     /// Create a new tokenized data from a string and a vocabulary
-    pub fn new(data: &str, vocab: Vocab, device: Device, kind: tch::Kind) -> Self {
-        let data = vocab.encode(data);
+    pub fn new(data: &str, tokenizer: &dyn Tokenizer, device: Device, kind: tch::Kind) -> Self {
+        let data = tokenizer.encode(data);
         let data = Tensor::from_slice(&data).to_device(device).to_kind(kind);
 
-        Self { data, vocab }
-    }
-
-    /// Return a reference to the vocabulary
-    pub fn vocab(&self) -> &Vocab {
-        &self.vocab
+        Self { data }
     }
 
     /// Return the number of tokens
@@ -138,12 +140,13 @@ impl Loader {
     /// Create a new data loader from a string and a vocabulary
     pub fn new(
         data: &str,
+        tokenizer: Box<dyn Tokenizer>,
         block_size: usize,
         batch_size: usize,
         device: Device,
         kind: tch::Kind,
     ) -> Self {
-        let tokenized_data = TokenizedData::new(data, Vocab::new(data), device, kind);
+        let tokenized_data = TokenizedData::new(data, tokenizer.as_ref(), device, kind);
         // The number of unique sequences of length `block_size+1` in the data
         let n_samples = tokenized_data.len() - block_size;
         // The number of (complete) batches
@@ -176,11 +179,6 @@ impl Loader {
             order: None,
             pos: 0,
         }
-    }
-
-    /// Return a reference to the vocabulary
-    pub fn vocab(&self) -> &Vocab {
-        self.data.vocab()
     }
 
     /// Return the number of batches
@@ -242,6 +240,33 @@ impl Loader {
     }
 }
 
+/// GPT2 tokenizer
+#[derive(Clone)]
+pub struct Gpt2Tokenizer {
+    tokenizer: tokenizers::Tokenizer,
+}
+
+impl Gpt2Tokenizer {
+    /// Create a new tokenizer from a file
+    pub fn new(path: String) -> Self {
+        let tokenizer: tokenizers::Tokenizer = tokenizers::Tokenizer::from_file(path).unwrap();
+
+        Self { tokenizer }
+    }
+}
+
+impl Tokenizer for Gpt2Tokenizer {
+    fn encode(&self, s: &str) -> Vec<i64> {
+        let encoding = self.tokenizer.encode(s, false).unwrap();
+        encoding.get_ids().iter().map(|&x| x as i64).collect()
+    }
+
+    fn decode(&self, v: &[i64]) -> String {
+        let v: Vec<u32> = v.iter().map(|&x| x as u32).collect();
+        self.tokenizer.decode(v, false).unwrap()
+    }
+}
+
 /// Test the data loader
 #[cfg(test)]
 mod tests {
@@ -267,7 +292,16 @@ mod tests {
         let data = "abcdefg";
         let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu, tch::Kind::Int64);
+        let tokenizer = Vocab::new(data);
+        let tokenizer = Box::new(tokenizer);
+        let mut loader = Loader::new(
+            data,
+            tokenizer,
+            block_size,
+            batch_size,
+            Device::Cpu,
+            tch::Kind::Int64,
+        );
 
         assert_eq!(loader.n_samples(), 4);
         assert_eq!(loader.n_batches(), 2);
@@ -295,7 +329,16 @@ mod tests {
         let data = "abcdef";
         let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu, tch::Kind::Int);
+        let tokenizer = Vocab::new(data);
+        let tokenizer = Box::new(tokenizer);
+        let mut loader = Loader::new(
+            data,
+            tokenizer,
+            block_size,
+            batch_size,
+            Device::Cpu,
+            tch::Kind::Int,
+        );
 
         assert_eq!(loader.n_samples(), 3);
         assert_eq!(loader.n_batches(), 1);
@@ -320,7 +363,16 @@ mod tests {
         let data = "abcdefg";
         let block_size = 3;
         let batch_size = 2;
-        let mut loader = Loader::new(data, block_size, batch_size, Device::Cpu, tch::Kind::Int);
+        let tokenizer = Vocab::new(data);
+        let tokenizer = Box::new(tokenizer);
+        let mut loader = Loader::new(
+            data,
+            tokenizer,
+            block_size,
+            batch_size,
+            Device::Cpu,
+            tch::Kind::Int,
+        );
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(123);
 
         loader.shuffle(&mut rng);

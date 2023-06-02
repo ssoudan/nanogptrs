@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 
-use tch::nn::ModuleT;
-use tch::{nn, IndexOp, Tensor};
+use tch::nn::{init, Init, ModuleT};
+use tch::{nn, IndexOp, Kind, Tensor};
 
 /// BigramLanguageModel is a language model that uses the current token to
 /// predict the next token.
@@ -40,6 +40,10 @@ impl LMModel for BigramLanguageModel {
         }
         xs
     }
+
+    fn block_size(&self) -> usize {
+        256 // FUTURE(ssoudan) ??
+    }
 }
 
 impl nn::ModuleT for BigramLanguageModel {
@@ -54,7 +58,7 @@ pub struct HeadConfig {
     /// The size of the head.
     pub head_size: i64,
     /// Block size.
-    pub block_size: i64,
+    pub block_size: usize,
     /// The embedding size.
     pub n_embd: i64,
     /// Whether to use bias.
@@ -78,14 +82,16 @@ impl From<&MultiHeadSelfAttentionConfig> for HeadConfig {
 /// One head self-attention.
 #[derive(Debug)]
 struct Head {
-    key: nn::Linear,
-    query: nn::Linear,
-    value: nn::Linear,
+    // key: nn::Linear,
+    // query: nn::Linear,
+    // value: nn::Linear,
+    c_attn: nn::Linear,
     mask: Tensor,
     dropout: f64,
     head_size: i64,
 }
 
+#[allow(unused)]
 impl Head {
     /// Create a new Head.
     ///
@@ -112,38 +118,27 @@ impl Head {
 
         let device = vs.device();
 
-        let key = nn::linear(
-            vs / "key",
+        // single qkv linear layer and split
+        let c_attn = nn::linear(
+            vs / "c_attn",
             n_embd,
-            head_size,
+            head_size * 3,
             nn::LinearConfig {
                 bias,
                 ..Default::default()
             },
         );
-        let query = nn::linear(
-            vs / "query",
-            n_embd,
-            head_size,
-            nn::LinearConfig {
-                bias,
-                ..Default::default()
-            },
-        );
-        let value = nn::linear(
-            vs / "value",
-            n_embd,
-            head_size,
-            nn::LinearConfig {
-                bias,
-                ..Default::default()
-            },
-        );
-        let mask = Tensor::ones([block_size, block_size], (tch::Kind::Float, device)).tril(0);
+
+        let mask = Tensor::ones(
+            [(block_size as i64), (block_size as i64)],
+            (tch::Kind::Float, device),
+        )
+        .tril(0);
         Self {
-            key,
-            query,
-            value,
+            // key,
+            // query,
+            // value,
+            c_attn,
             mask,
             head_size,
             dropout,
@@ -159,11 +154,18 @@ impl nn::ModuleT for Head {
         // the dimension of the keys
         let d_k = head_size;
 
-        let k = xs.apply(&self.key); // [b, t, head_size]
+        // use a single linear layer and split (in q, k, v order)
+        let c_attn = xs.apply(&self.c_attn); // [b, t, head_size * 3]
+        let qkv = c_attn.split(self.head_size, 2); // 3 * [b, t, head_size]
+        let q = &qkv[0];
+        let k = &qkv[1];
+        let v = &qkv[2];
+
+        // let k = xs.apply(&k); // [b, t, head_size]
         assert_eq!(k.size(), &[b, t, head_size]);
-        let q = xs.apply(&self.query); // [b, t, head_size]
+        // let q = xs.apply(&self.query); // [b, t, head_size]
         assert_eq!(q.size(), &[b, t, head_size]);
-        let v = xs.apply(&self.value); // [b, t, head_size]
+        // let v = xs.apply(&self.value); // [b, t, head_size]
         assert_eq!(v.size(), &[b, t, head_size]);
 
         // Attention scores
@@ -188,7 +190,7 @@ impl nn::ModuleT for Head {
 #[derive(Debug, Clone, Copy)]
 pub struct MultiHeadSelfAttentionConfig {
     /// The maximum sequence length.
-    pub block_size: i64,
+    pub block_size: usize,
     /// The embedding size.
     pub n_embd: i64,
     /// The size of the head.
@@ -217,9 +219,13 @@ impl From<&BlockConfig> for MultiHeadSelfAttentionConfig {
 /// MultiHeadSelfAttention is a multi-head self-attention layer.
 #[derive(Debug)]
 pub struct MultiHeadSelfAttention {
-    heads: Vec<Head>,
+    c_attn: nn::Linear,
     projection: nn::Linear,
     dropout: f64,
+    n_embd: i64,
+    n_head: i64,
+    head_size: i64,
+    mask: Tensor,
 }
 
 impl MultiHeadSelfAttention {
@@ -239,43 +245,119 @@ impl MultiHeadSelfAttention {
         } = config;
 
         let head_config = HeadConfig::from(&config);
+        let head_size = head_config.head_size;
 
         let vs = vs.borrow();
 
-        let heads = (0..n_head)
-            .map(|i| Head::new(vs / i, head_config))
-            .collect();
+        // Build attention heads all at once
+        ////////////////////////////////////////
+        let attn_vs = vs / "c_attn";
 
-        let projection = nn::linear(
-            vs / "projection",
-            n_embd,
-            n_embd,
-            nn::LinearConfig {
-                bias,
-                ..Default::default()
-            },
+        // create manually, init and transpose so it matches the
+        // checkpoints from gpt2
+        let c_attn_ws = attn_vs.var(
+            "weight",
+            &[n_embd, n_embd * 3],
+            init::DEFAULT_KAIMING_UNIFORM,
         );
 
+        let c_attn_bs = if bias {
+            Some(attn_vs.var("bias", &[n_embd * 3], Init::Const(0.)))
+        } else {
+            None
+        };
+
+        // transpose - to align with GPT2 checkpoints
+        let c_attn_ws = c_attn_ws.transpose(0, 1);
+
+        assert_eq!(c_attn_ws.size(), &[3 * n_embd, n_embd]);
+        if bias {
+            assert_eq!(c_attn_bs.as_ref().unwrap().size(), &[3 * n_embd]);
+        } else {
+            assert!(c_attn_bs.is_none());
+        }
+
+        let c_attn = nn::Linear {
+            ws: c_attn_ws,
+            bs: c_attn_bs,
+        };
+
+        // Build projections
+        ////////////////////////////////////////
+        let projection_vs = vs / "c_proj";
+
+        let c_proj_w =
+            projection_vs.var("weight", &[n_embd, n_embd], init::DEFAULT_KAIMING_UNIFORM);
+
+        let c_proj_b = if bias {
+            Some(projection_vs.var("bias", &[n_embd], Init::Const(0.)))
+        } else {
+            None
+        };
+
+        // transpose - to align with GPT2 checkpoints
+        let c_proj_w = c_proj_w.transpose(0, 1);
+
+        assert_eq!(c_proj_w.size(), &[n_embd, n_embd]);
+        if bias {
+            assert_eq!(c_proj_b.as_ref().unwrap().size(), &[n_embd]);
+        } else {
+            assert!(c_proj_b.is_none());
+        }
+
+        let projection = nn::Linear {
+            ws: c_proj_w,
+            bs: c_proj_b,
+        };
+
+        let block_size = config.block_size as i64;
+        let device = vs.device();
+
+        let mask = Tensor::ones([block_size, block_size], (Kind::Float, device))
+            .tril(0)
+            .view([1, 1, block_size, block_size]);
+
         Self {
-            heads,
+            c_attn,
             projection,
             dropout,
+            mask,
+            n_embd,
+            n_head,
+            head_size,
         }
     }
 }
 
 impl nn::ModuleT for MultiHeadSelfAttention {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
-        // concatenate the heads along the last dimension
-        let heads = self
-            .heads
-            .iter()
-            .map(|h| h.forward_t(xs, train))
-            .collect::<Vec<_>>();
+        let (b, t, c) = xs.size3().unwrap();
 
-        let out = Tensor::cat(&heads, -1);
+        // got to process all the 'heads' at once - and each head does the query, key,
+        // value at once too
+        let qkv = self.c_attn.forward_t(xs, train).split(self.n_embd, 2);
+        let q = qkv[0].view([b, t, self.n_head, -1]).transpose(1, 2); // [b, n_head, t, head_size]
+        let k = qkv[1].view([b, t, self.n_head, -1]).transpose(1, 2); // [b, n_head, t, head_size]
+        let v = qkv[2].view([b, t, self.n_head, -1]).transpose(1, 2); // [b, n_head, t, head_size]
 
-        out.apply(&self.projection).dropout(self.dropout, train)
+        assert_eq!(q.size(), &[b, self.n_head, t, self.head_size]);
+        assert_eq!(k.size(), &[b, self.n_head, t, self.head_size]);
+        assert_eq!(v.size(), &[b, self.n_head, t, self.head_size]);
+
+        // compute attention score
+        let wei = q.matmul(&k.transpose(-2, -1)) / (self.head_size as f64).sqrt(); // [b, n_head, t, t]
+        assert_eq!(wei.size(), &[b, self.n_head, t, t]);
+        let wei = wei.masked_fill(&self.mask.i((.., .., ..t, ..t)).eq(0.), f64::NEG_INFINITY);
+        let wei = wei.softmax(-1, Kind::Float); // FUTURE(ssoudan) Float?
+        assert_eq!(wei.size(), &[b, self.n_head, t, t]);
+        let wei = wei.dropout(self.dropout, train);
+        let attn = wei.matmul(&v); // [b, n_head, t, head_size]
+
+        assert_eq!(attn.size(), &[b, self.n_head, t, self.head_size]);
+
+        let heads = attn.transpose(1, 2).contiguous().view([b, t, c]);
+
+        heads.apply(&self.projection).dropout(self.dropout, train)
     }
 }
 
@@ -286,6 +368,8 @@ pub struct FeedForwardConfig {
     pub n_embd: i64,
     /// The dropout probability.
     pub dropout: f64,
+    /// Whether to add a bias after the linear transformation.
+    pub bias: bool,
 }
 
 impl From<&BlockConfig> for FeedForwardConfig {
@@ -293,6 +377,7 @@ impl From<&BlockConfig> for FeedForwardConfig {
         Self {
             n_embd: config.n_embd,
             dropout: config.dropout,
+            bias: config.bias,
         }
     }
 }
@@ -306,23 +391,76 @@ pub struct FeedForward {
 impl FeedForward {
     /// Create a new FeedForward
     pub fn new<'a, T: Borrow<nn::Path<'a>>>(vs: T, config: FeedForwardConfig) -> Self {
-        let FeedForwardConfig { n_embd, dropout } = config;
+        let FeedForwardConfig {
+            n_embd,
+            dropout,
+            bias,
+        } = config;
 
-        let vs = vs.borrow();
+        // c_fc linear
+        let c_fc_vs = vs.borrow() / "c_fc";
+        let c_fc_weight = c_fc_vs.var(
+            "weight",
+            &[n_embd, 4 * n_embd],
+            init::DEFAULT_KAIMING_UNIFORM,
+        );
+
+        let c_fc_bias = if bias {
+            Some(c_fc_vs.var("bias", &[4 * n_embd], Init::Const(0.)))
+        } else {
+            None
+        };
+
+        // transpose - to align with GPT2 checkpoints
+        let c_fc_weight = c_fc_weight.transpose(0, 1);
+
+        assert_eq!(c_fc_weight.size(), &[4 * n_embd, n_embd]);
+
+        if bias {
+            assert_eq!(c_fc_bias.as_ref().unwrap().size(), &[4 * n_embd]);
+        } else {
+            assert!(c_fc_bias.is_none());
+        }
+
+        let c_fc = nn::Linear {
+            ws: c_fc_weight,
+            bs: c_fc_bias,
+        };
+
+        // c_proj linear
+        let c_proj_vs = vs.borrow() / "c_proj";
+        let c_proj_weight = c_proj_vs.var(
+            "weight",
+            &[4 * n_embd, n_embd],
+            init::DEFAULT_KAIMING_UNIFORM,
+        );
+
+        let c_proj_bias = if bias {
+            Some(c_proj_vs.var("bias", &[n_embd], Init::Const(0.)))
+        } else {
+            None
+        };
+
+        // transpose - to align with GPT2 checkpoints
+        let c_proj_weight = c_proj_weight.transpose(0, 1);
+
+        assert_eq!(c_proj_weight.size(), &[n_embd, 4 * n_embd]);
+
+        if bias {
+            assert_eq!(c_proj_bias.as_ref().unwrap().size(), &[n_embd]);
+        } else {
+            assert!(c_proj_bias.is_none());
+        }
+
+        let c_proj = nn::Linear {
+            ws: c_proj_weight,
+            bs: c_proj_bias,
+        };
+
         let net = nn::seq_t()
-            .add(nn::linear(
-                vs / "net",
-                n_embd,
-                4 * n_embd,
-                Default::default(),
-            ))
-            .add_fn(|xs| xs.relu())
-            .add(nn::linear(
-                vs / "projection",
-                4 * n_embd,
-                n_embd,
-                Default::default(),
-            ))
+            .add(c_fc)
+            .add_fn(|xs| xs.gelu("tanh"))
+            .add(c_proj)
             .add_fn_t(move |xs, train| xs.dropout(dropout, train));
 
         Self { net }
@@ -339,7 +477,7 @@ impl nn::ModuleT for FeedForward {
 #[derive(Debug, Clone, Copy)]
 pub struct BlockConfig {
     /// The maximum sequence length.
-    pub block_size: i64,
+    pub block_size: usize,
     /// The embedding size.
     pub n_embd: i64,
     /// The size of the head.
@@ -467,9 +605,9 @@ impl nn::Module for LayerNorm {
 #[derive(Debug)]
 struct Block {
     /// SA heads
-    sa_heads: MultiHeadSelfAttention,
+    attn: MultiHeadSelfAttention,
     /// Feed forward layer
-    ffwd: FeedForward,
+    mlp: FeedForward,
     /// Layer normalization
     ln1: LayerNorm,
     /// Layer normalization
@@ -498,11 +636,11 @@ impl Block {
 
         assert_eq!(n_embd % n_head, 0, "n_emb must be divisible by n_head");
 
-        let sa_heads = MultiHeadSelfAttention::new(vs / "sa_heads", mhsa_config);
-        let ffwd = FeedForward::new(vs / "ffwd", ffwd_config);
+        let sa_heads = MultiHeadSelfAttention::new(vs / "attn", mhsa_config);
+        let mlp = FeedForward::new(vs / "mlp", ffwd_config);
 
         let ln1 = LayerNorm::new(
-            vs / "ln1",
+            vs / "ln_1",
             vec![n_embd],
             LayerNormConfig {
                 elementwise_bias: config.bias,
@@ -510,7 +648,7 @@ impl Block {
             },
         );
         let ln2 = LayerNorm::new(
-            vs / "ln2",
+            vs / "ln_2",
             vec![n_embd],
             LayerNormConfig {
                 elementwise_bias: config.bias,
@@ -519,8 +657,8 @@ impl Block {
         );
 
         Self {
-            sa_heads,
-            ffwd,
+            attn: sa_heads,
+            mlp,
             ln1,
             ln2,
         }
@@ -530,11 +668,11 @@ impl Block {
 impl nn::ModuleT for Block {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // SA heads with residual connection
-        let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.sa_heads, train);
+        let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.attn, train);
         // [b, t, n_embd]
 
         // Feed forward layer with residual connection
-        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.ffwd, train)
+        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.mlp, train)
         // [b, t, n_embd]
     }
 }
@@ -553,11 +691,13 @@ pub struct NanoGpt {
     /// The vocabulary size
     vocab_size: i64,
     /// The maximum sequence length
-    block_size: i64,
+    block_size: usize,
     /// Layers
     layers: nn::SequentialT,
     /// Layer normalization
     ln: LayerNorm,
+    /// Dropout probability
+    dropout: f64,
 }
 
 /// NanoGpt configuration.
@@ -566,7 +706,7 @@ pub struct NanoGptConfig {
     /// The vocabulary size.
     pub vocab_size: i64,
     /// The maximum sequence length.
-    pub block_size: i64,
+    pub block_size: usize,
     /// The embedding size.
     pub n_embd: i64,
     /// The number of heads.
@@ -577,6 +717,8 @@ pub struct NanoGptConfig {
     pub dropout: f64,
     /// Biases flag.
     pub bias: bool,
+    /// Weight tying for WTE and LM head.
+    pub tie_weights: bool,
 }
 
 impl NanoGpt {
@@ -594,39 +736,43 @@ impl NanoGpt {
             block_size,
             n_embd,
             n_layer,
+            dropout,
             ..
         } = config;
 
-        let token_embedding =
-            nn::embedding(vs / "embedding", vocab_size, n_embd, Default::default());
+        let token_embedding = nn::embedding(vs / "wte", vocab_size, n_embd, Default::default());
 
-        let position_embedding = nn::embedding(
-            vs / "position_embedding",
-            block_size,
-            n_embd,
-            Default::default(),
-        );
+        let position_embedding =
+            nn::embedding(vs / "wpe", block_size as i64, n_embd, Default::default());
 
         let mut layers = nn::seq_t();
         for i in 0..n_layer {
-            layers = layers.add(Block::new(vs / i, block_config));
+            layers = layers.add(Block::new(vs / "h" / i, block_config));
         }
 
-        let lm_head = nn::linear(
-            vs / "lm_head",
-            n_embd,
-            vocab_size,
-            nn::LinearConfig {
-                bias: false,
-                ..Default::default()
-            },
-        );
+        // lm_head with weight tying to token_embedding weight
+        let lm_head = if config.tie_weights {
+            nn::Linear {
+                ws: token_embedding.ws.shallow_clone(),
+                bs: None,
+            }
+        } else {
+            nn::linear(
+                vs / "lm_head",
+                n_embd,
+                vocab_size,
+                nn::LinearConfig {
+                    bias: false,
+                    ..Default::default()
+                },
+            )
+        };
 
         let ln = LayerNorm::new(
-            vs / "ln",
+            vs / "ln_f",
             vec![n_embd],
             LayerNormConfig {
-                elementwise_bias: false,
+                elementwise_bias: config.bias,
                 ..Default::default()
             },
         );
@@ -640,6 +786,7 @@ impl NanoGpt {
             vocab_size,
             block_size,
             ln,
+            dropout,
         }
     }
 }
@@ -653,7 +800,7 @@ impl nn::ModuleT for NanoGpt {
 
         // pos_emb
         let device = xs.device();
-        let pos = Tensor::arange_start(0, t, (tch::Kind::Int64, device)); // [t]
+        let pos = Tensor::arange_start(0, t, (tch::Kind::Int, device)); // [t]
         let pos = pos.unsqueeze(0); // [1, t]
         assert_eq!(pos.size(), &[1, t]);
 
@@ -664,6 +811,8 @@ impl nn::ModuleT for NanoGpt {
         // residual connection
         let x = tok_emb + pos_emb; // [batch_size, block_size, n_embd]
         assert_eq!(x.size(), &[b, t, self.n_embd]);
+
+        let x = x.dropout(self.dropout, train); // [batch_size, block_size, n_embd]
 
         // layers
         let x = x.apply_t(&self.layers, train); // [batch_size, block_size, n_embd]
@@ -702,15 +851,19 @@ impl LMModel for NanoGpt {
             xs = Tensor::cat(&[xs, next_token], 1);
 
             // crop the sequence to the maximum length, starting from the end if needed
-            // FUTURE(ssoudan) better way?
+            // NOFUTURE(ssoudan) better way?
             let (_b, t) = xs.size2().unwrap();
-            if t > self.block_size {
-                xs = xs.i((.., (t - self.block_size)..));
+            if t > self.block_size as i64 {
+                xs = xs.i((.., (t - (self.block_size as i64))..));
             }
-            assert!(xs.size()[1] <= self.block_size);
+            assert!(xs.size()[1] <= self.block_size as i64);
         }
 
         outputs
+    }
+
+    fn block_size(&self) -> usize {
+        self.block_size
     }
 }
 
@@ -723,6 +876,9 @@ pub trait LMModel: nn::ModuleT {
     /// max_len: the maximum length of the generated sequence
     /// return: the generated sequence of tokens of shape [batch_size, max_len]
     fn generate(&self, xs: Tensor, max_len: i64) -> Tensor;
+
+    /// Return the block size
+    fn block_size(&self) -> usize;
 }
 
 /// Compute the loss
@@ -741,7 +897,7 @@ pub fn loss(logits: &Tensor, targets: &Tensor) -> Tensor {
 
 #[cfg(test)]
 mod tests {
-    use tch::nn::ModuleT;
+    use tch::nn::{Module, ModuleT};
 
     use super::*;
 
@@ -800,6 +956,7 @@ mod tests {
         let n_layer = 2;
         let bias = true;
         let dropout = 0.1;
+        let tie_weights = true;
 
         let config = NanoGptConfig {
             vocab_size,
@@ -809,18 +966,22 @@ mod tests {
             n_layer,
             bias,
             dropout,
+            tie_weights,
         };
 
         let model = NanoGpt::new(&vs.root(), config);
         let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
-        let xs = xs.view([batch_size, block_size]);
+        let xs = xs.view([batch_size as i64, block_size as i64]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
-        assert_eq!(b, batch_size);
-        assert_eq!(t, block_size);
+        assert_eq!(b, batch_size as i64);
+        assert_eq!(t, block_size as i64);
 
         let logits = model.forward_t(&xs, false);
-        assert_eq!(logits.size(), [batch_size, block_size, vocab_size]);
+        assert_eq!(
+            logits.size(),
+            [batch_size as i64, block_size as i64, vocab_size]
+        );
 
         let _loss = loss(&logits, &xs);
     }
@@ -838,6 +999,7 @@ mod tests {
         let n_layer = 2;
         let bias = true;
         let dropout = 0.1;
+        let tie_weights = true;
 
         let config = NanoGptConfig {
             vocab_size,
@@ -847,18 +1009,22 @@ mod tests {
             n_layer,
             bias,
             dropout,
+            tie_weights,
         };
 
         let model = NanoGpt::new(&vs.root(), config);
         let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5]).to_kind(tch::Kind::Int);
-        let xs = xs.view([batch_size, block_size - 2]);
+        let xs = xs.view([batch_size, block_size as i64 - 2]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
         assert_eq!(b, batch_size);
-        assert_eq!(t, block_size - 2);
+        assert_eq!(t, block_size as i64 - 2);
 
         let logits = model.forward_t(&xs, false);
-        assert_eq!(logits.size(), [batch_size, block_size - 2, vocab_size]);
+        assert_eq!(
+            logits.size(),
+            [batch_size, block_size as i64 - 2, vocab_size]
+        );
 
         let _loss = loss(&logits, &xs);
     }
@@ -874,6 +1040,7 @@ mod tests {
         let n_layer = 2;
         let bias = true;
         let dropout = 0.1;
+        let tie_weights = true;
 
         let config = NanoGptConfig {
             vocab_size,
@@ -883,18 +1050,19 @@ mod tests {
             n_layer,
             bias,
             dropout,
+            tie_weights,
         };
 
         let model = NanoGpt::new(&vs.root(), config);
         let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
-        let xs = xs.view([batch_size, block_size]);
+        let xs = xs.view([batch_size, block_size as i64]);
         println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
         assert_eq!(b, batch_size);
-        assert_eq!(t, block_size);
+        assert_eq!(t, block_size as i64);
 
         let logits = model.forward_t(&xs, false);
-        assert_eq!(logits.size(), [batch_size, block_size, vocab_size]);
+        assert_eq!(logits.size(), [batch_size, block_size as i64, vocab_size]);
 
         let loss = loss(&logits, &xs);
         println!("loss: {:?}", loss);
@@ -919,5 +1087,50 @@ mod tests {
         let second = ys.i((1, ..));
         let second: Vec<i64> = second.reshape(-1).try_into().unwrap();
         println!("second: {:?}", second);
+    }
+
+    /// Test shared tensor for linear layer
+    #[test]
+    fn test_shared_tensor_linear() {
+        let vs = nn::VarStore::new(tch::Device::Cpu);
+
+        let input_size = 10;
+        let output_size = 20;
+        let n = 2;
+        let batch_size = 2;
+
+        let shared_linear_weight = Tensor::randn(
+            &[input_size, n * output_size],
+            (tch::Kind::Float, tch::Device::Cpu),
+        );
+
+        // transpose
+        let shared_linear_weight = shared_linear_weight.transpose(0, 1);
+
+        let linear_weights = shared_linear_weight.split(output_size, 0);
+
+        let linears = linear_weights
+            .into_iter()
+            .map(|ws| nn::Linear { ws, bs: None })
+            .collect::<Vec<_>>();
+
+        // Test forward pass
+        let xs = Tensor::randn(
+            &[batch_size, input_size],
+            (tch::Kind::Float, tch::Device::Cpu),
+        );
+
+        let mut ys = Vec::new();
+
+        for linear in &linears {
+            let y = linear.forward(&xs);
+            assert_eq!(y.size(), [batch_size, output_size]);
+            ys.push(y);
+        }
+
+        assert_eq!(ys.len(), n as usize);
+
+        assert_eq!(ys[0].size(), [batch_size, output_size]);
+        assert_eq!(ys[1].size(), [batch_size, output_size]);
     }
 }

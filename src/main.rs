@@ -83,10 +83,10 @@ struct TrainingParameters {
 
     /// Number of training iterations before evaluating the losses on the
     /// training and validation sets.
-    #[arg(long, default_value_t = 750)]
+    #[arg(long, default_value_t = 1000)]
     steps_between_loss_estimation: usize,
     /// Number of batches to use for estimating the losses.
-    #[arg(long, default_value_t = 150)]
+    #[arg(long, default_value_t = 100)]
     loss_estimation_steps: usize,
     /// Maximum gradient norm - 0.0 means no clipping.
     #[arg(long, default_value_t = 1.0)]

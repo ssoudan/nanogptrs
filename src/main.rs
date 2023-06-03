@@ -75,8 +75,8 @@ struct TrainingParameters {
     #[arg(long, default_value_t = 1e-4)]
     lr: f64,
     /// Number of epochs
-    #[arg(long, default_value_t = 1)]
-    n_epochs: usize,
+    #[arg(long, default_value_t = 1.)]
+    n_epochs: f32,
     /// Batch size
     #[arg(long, default_value_t = 64)]
     batch_size: usize,
@@ -537,7 +537,7 @@ fn create_model(vs: &mut VarStore, model: Model) -> (Box<dyn LMModel>, Box<dyn T
 }
 
 struct LearnConfig {
-    n_epochs: usize,
+    n_epochs: f32,
     lr: f64,
     steps_between_loss_estimation: usize,
     loss_estimation_steps: usize,
@@ -570,7 +570,7 @@ fn learn<R: Rng>(
 
     pb_reporter.epoch_start(n_epochs, batches_per_epoch);
 
-    let n_steps = batches_per_epoch * n_epochs;
+    let n_steps = (batches_per_epoch as f32 * n_epochs) as usize;
 
     train_dataloader.shuffle(&mut rng);
 

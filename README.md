@@ -23,10 +23,17 @@ ln -sf $TORCH_DIR torch
 ls -l torch
 ```
 
-# Run
+# Run - generate from pretrained GPT-2
 
 ```bash
-cargo run --release -- --device=cuda --n-epochs=3 nano-gpt
+./models/download.sh gpt2
+cargo run --release -- --device=cuda --restore-from models/gpt2/model.safetensors generate --max-len 128 gpt2
+```
+
+# Run - train nano-gpt
+
+```bash
+cargo run --release -- --device=cuda train --n-epochs=3 --final-checkpoint-path=models/nanogptrs.safetensors nano-gpt
 ```
 
 Should eventually (~5h on my Titan XP) produce something like this:

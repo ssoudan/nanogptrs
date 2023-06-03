@@ -40,10 +40,10 @@ impl Default for PbProgressReporter {
 }
 
 impl ProgressReporter for PbProgressReporter {
-    fn epoch_start(&mut self, n_epochs: usize, batches_per_epochs: usize) {
+    fn epoch_start(&mut self, n_epochs: f32, batches_per_epochs: usize) {
         let epoch_bar = self
             .mb
-            .add(ProgressBar::new((n_epochs * batches_per_epochs) as u64));
+            .add(ProgressBar::new((n_epochs * batches_per_epochs as f32) as u64));
         epoch_bar.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner:.green} MASTER   {bar:20.cyan/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}, Epoch {epoch_progress}] {msg}")
@@ -141,7 +141,7 @@ impl ProgressReporter for PbProgressReporter {
 /// A trait for reporting progress during training.
 pub trait ProgressReporter {
     /// Called before epoch starts.
-    fn epoch_start(&mut self, n_epochs: usize, batches_per_epochs: usize);
+    fn epoch_start(&mut self, n_epochs: f32, batches_per_epochs: usize);
     /// Called when an epoch ends.
     fn epoch_progress(&mut self, current_epoch: usize);
     /// Called when all epochs have been processed.

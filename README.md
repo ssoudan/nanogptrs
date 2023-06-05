@@ -27,7 +27,7 @@ ls -l torch
 
 ```bash
 ./models/download.sh gpt2
-cargo run --release -- --device=cuda --restore-from models/gpt2/model.safetensors generate --max-len 128 gpt2
+cargo run --release -- --device=cuda --restore-from models/gpt2/model.safetensors generate --max-len 32 --prompt "Once upon a time" gpt2
 ```
 
 # Run - train nano-gpt

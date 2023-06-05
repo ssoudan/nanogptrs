@@ -2,8 +2,7 @@ use rand::prelude::*;
 use tch::{Device, Tensor};
 
 /// Load data/input.txt and return a string
-pub fn load_file() -> String {
-    let path = "data/input.txt";
+pub fn load_file(path: &str) -> String {
     std::fs::read_to_string(path).expect("Unable to read file")
 }
 
@@ -13,6 +12,7 @@ pub struct Vocab {
     chars: Vec<char>,
 }
 
+// FUTURE(ssoudan) template the String part
 /// A tokenizer
 pub trait Tokenizer {
     /// Encode a string
@@ -20,6 +20,9 @@ pub trait Tokenizer {
 
     /// Decode a string
     fn decode(&self, v: &[i64]) -> String;
+
+    /// Returns the vocabulary
+    fn vocab(&self) -> Vec<String>;
 }
 
 impl Vocab {
@@ -45,20 +48,20 @@ impl Vocab {
     pub fn size(&self) -> usize {
         self.chars.len()
     }
-
-    // Return a reference to the characters
-    // fn chars(&self) -> &Vec<char> {
-    //     &self.chars
-    // }
 }
 
 impl Tokenizer for Vocab {
     fn encode(&self, s: &str) -> Vec<i64> {
+        // TODO(ssoudan) return a Result
         s.chars().map(|c| self.encode_char(c)).collect()
     }
 
     fn decode(&self, v: &[i64]) -> String {
         v.iter().map(|&i| self.decode_char(i)).collect()
+    }
+
+    fn vocab(&self) -> Vec<String> {
+        self.chars.iter().map(|&c| c.to_string()).collect()
     }
 }
 
@@ -264,6 +267,16 @@ impl Tokenizer for Gpt2Tokenizer {
     fn decode(&self, v: &[i64]) -> String {
         let v: Vec<u32> = v.iter().map(|&x| x as u32).collect();
         self.tokenizer.decode(v, false).unwrap()
+    }
+
+    fn vocab(&self) -> Vec<String> {
+        (0..self.tokenizer.get_vocab_size(true))
+            .map(|i| {
+                self.tokenizer
+                    .id_to_token(i as u32)
+                    .unwrap_or_else(|| "???".to_string())
+            })
+            .collect()
     }
 }
 

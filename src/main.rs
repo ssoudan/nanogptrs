@@ -24,11 +24,12 @@ enum Device {
     /// CUDA if available
     Cuda,
     /// MPS
+    #[cfg(target_arch = "aarch64")]
     Mps,
 }
 
 /// Arguments for the NanoGPT model.
-#[derive(Parser, Debug, Clone, Copy)]
+#[derive(Parser, Debug, Clone)]
 struct NanoGptArgs {
     /// Maximum sequence length
     #[arg(long, default_value_t = 256)]
@@ -52,6 +53,10 @@ struct NanoGptArgs {
     /// Tie the weights of the token embedding and the lm head
     #[arg(long, default_value_t = true)]
     tie_weights: bool,
+
+    /// Vocabulary file
+    #[arg(long, default_value = "data/input.txt")]
+    vocab_file: String,
 }
 
 impl Default for NanoGptArgs {
@@ -64,6 +69,7 @@ impl Default for NanoGptArgs {
             dropout: 0.2,
             bias: true,
             tie_weights: true,
+            vocab_file: "data/input.txt".to_string(),
         }
     }
 }
@@ -95,6 +101,14 @@ struct TrainingParameters {
     /// Final checkpoint path
     #[arg(long)]
     final_checkpoint_path: Option<String>,
+
+    /// Dataset path
+    #[arg(long, default_value = "data/input.txt")]
+    dataset_path: String,
+
+    /// Prompt to use for an example after the training
+    #[arg(long)]
+    prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -146,7 +160,11 @@ enum Model {
         args: NanoGptArgs,
     },
     /// Bigram
-    Bigram,
+    Bigram {
+        /// Vocabulary file
+        #[arg(long, default_value = "data/input.txt")]
+        vocab_file: String,
+    },
     /// GPT2
     GPT2 {
         /// The arguments for the GPT2 model
@@ -166,6 +184,16 @@ impl Default for Model {
 /// The action to perform.
 #[derive(Subcommand, Debug, Clone)]
 enum Action {
+    /// Next tokens distribution
+    NextToken {
+        /// The model to use
+        #[command(subcommand)]
+        model: Model,
+
+        /// The prompt to use
+        #[arg(long, default_value = "Once upon a time ")]
+        prompt: String,
+    },
     /// Generate text
     Generate {
         /// The model to use
@@ -175,6 +203,10 @@ enum Action {
         /// The number of tokens to generate
         #[arg(long, default_value_t = 128)]
         max_len: usize,
+
+        /// The prompt to use
+        #[arg(long, default_value = "Once upon a time ")]
+        prompt: String,
     },
     /// Train the model
     Train {
@@ -193,6 +225,7 @@ impl Default for Action {
         Self::Generate {
             model: Model::default(),
             max_len: 128,
+            prompt: "Once upon a time ".to_string(),
         }
     }
 }
@@ -218,23 +251,12 @@ fn main() {
     let device = match args.device {
         Device::Cpu => tch::Device::Cpu,
         Device::Cuda => tch::Device::cuda_if_available(),
+        #[cfg(target_arch = "aarch64")]
         Device::Mps => tch::Device::Mps,
     };
 
     // print a banner with nanoGPTrs
-    println!(
-        r#"
-                                 ****   ****   *****                
-                                *    *  *   *    *                  
-                                *       *   *    *                  
-* ***    ****   * ***    ****   *       *   *    *    * **   ****   
-**   *       *  **   *  *    *  *       ****     *     *    *    *  
-*    *   *****  *    *  *    *  *  ***  *        *     *     **     
-*    *  *    *  *    *  *    *  *    *  *        *     *       **   
-*    *  *   **  *    *  *    *  *   **  *        *     *    *    *  
-*    *   *** *  *    *   ****    *** *  *        *     *     ****   
-"#
-    );
+    println!(r#"nanoGPTrs"#);
 
     // if not built in release mode, print a big warning
     #[cfg(debug_assertions)]
@@ -247,16 +269,10 @@ fn main() {
     let mut vs = tch::nn::VarStore::new(device);
 
     match args.action {
-        Action::Generate { model, max_len } => {
+        Action::NextToken { model, prompt } => {
             // Build the model
             let (model, tokenizer) = create_model(&mut vs, model);
             println!("[+] Got a model and a tokenizer");
-
-            // list variables in the model
-            println!("[.] Variables in the model:");
-            for (name, var) in vs.variables() {
-                println!("  - {}: {:?}", name, var.size());
-            }
 
             // Restore the model from the checkpoint
             if args.restore_from.is_some() {
@@ -268,8 +284,31 @@ fn main() {
 
             // freeze?
 
-            println!("[.] Generating text");
-            let gen = generate(device, model, tokenizer, max_len);
+            println!("[.] Next token probabilities for: [{}]...", prompt);
+            let gen = next_token(device, model, tokenizer, prompt);
+            println!("[+] distribution: {:#?}", gen);
+        }
+        Action::Generate {
+            model,
+            max_len,
+            prompt,
+        } => {
+            // Build the model
+            let (model, tokenizer) = create_model(&mut vs, model);
+            println!("[+] Got a model and a tokenizer");
+
+            // Restore the model from the checkpoint
+            if args.restore_from.is_some() {
+                println!("[.] Restoring the model from the checkpoint");
+                // Restore the model from the checkpoint
+                vs.load(args.restore_from.as_ref().unwrap()).unwrap();
+                println!("[+] Restored the model from the checkpoint")
+            }
+
+            // freeze?
+
+            println!("[.] Generating text: [{}]...", prompt);
+            let gen = generate(device, model, tokenizer, prompt, max_len);
             println!("[+] Generated text: {}", gen);
         }
         Action::Train {
@@ -295,15 +334,35 @@ fn main() {
     }
 }
 
+/// Next token probabilities
+fn next_token(
+    device: tch::Device,
+    model: Box<dyn LMModel>,
+    tokenizer: Box<dyn Tokenizer>,
+    xs: String,
+) -> Vec<(String, f64)> {
+    // generate some text
+    let xs = tokenizer.encode(&xs);
+    let xs = Tensor::from_slice(&xs).reshape([1, -1]).to(device);
+    let probs = model.probabilities(&xs);
+    let probs: Vec<f64> = probs.to(tch::Device::Cpu).reshape(-1).try_into().unwrap();
+
+    let vocab = tokenizer.vocab();
+
+    // zip the vocab and the probs
+    vocab.into_iter().zip(probs.into_iter()).collect::<Vec<_>>()
+}
+
 /// Generate text
 fn generate(
     device: tch::Device,
     model: Box<dyn LMModel>,
     tokenizer: Box<dyn Tokenizer>,
+    xs: String,
     max_len: usize,
 ) -> String {
     // generate some text
-    let xs = tokenizer.encode("Once upon a time,");
+    let xs = tokenizer.encode(&xs);
     let xs = Tensor::from_slice(&xs).reshape([1, -1]).to(device);
     let ys = model.generate(xs, max_len as i64);
 
@@ -321,7 +380,7 @@ fn train(
     training_params: TrainingParameters,
 ) {
     // Load the data
-    let data = load_file();
+    let data = load_file(&training_params.dataset_path);
     println!("data.len(): {}", data.len());
 
     // print the first 200 characters
@@ -361,6 +420,11 @@ fn train(
     train_dataloader.shuffle(&mut rng);
     valid_dataloader.shuffle(&mut rng);
 
+    // print the names of the parameters
+    vs.variables().iter().for_each(|(name, t)| {
+        println!("{name}: {t:?}", name = name, t = t.size());
+    });
+
     // number of parameters
     let nb_params = vs
         .trainable_variables()
@@ -368,11 +432,6 @@ fn train(
         .map(|t| t.size().iter().product::<i64>())
         .sum::<i64>();
     println!("nb parameters: {}", nb_params);
-
-    // print the names of the parameters
-    vs.variables().iter().for_each(|(name, t)| {
-        println!("{name}: {t:?}", name = name, t = t.size());
-    });
 
     let xs = Tensor::zeros([1, 1_i64], (tch::Kind::Int, device));
     let max_len = 100;
@@ -423,8 +482,10 @@ fn train(
         vs.save(final_checkpoint_path).unwrap();
     }
 
-    let gen = generate(device, model, tokenizer, 500);
-    println!("[i] after training: {}", gen);
+    if let Some(prompt) = training_params.prompt {
+        let gen = generate(device, model, tokenizer, prompt.clone(), 500);
+        println!("[i] after training: [{}]...{}", prompt, gen);
+    }
 }
 
 fn create_model(vs: &mut VarStore, model: Model) -> (Box<dyn LMModel>, Box<dyn Tokenizer>) {
@@ -439,10 +500,11 @@ fn create_model(vs: &mut VarStore, model: Model) -> (Box<dyn LMModel>, Box<dyn T
                     dropout,
                     bias,
                     tie_weights,
+                    vocab_file,
                 },
         } => {
             // Load the data
-            let data = load_file();
+            let data = load_file(&vocab_file);
             // build the vocabulary
             let vocab = Vocab::new(&data);
 
@@ -461,13 +523,13 @@ fn create_model(vs: &mut VarStore, model: Model) -> (Box<dyn LMModel>, Box<dyn T
                 Box::new(vocab),
             )
         }
-        Model::Bigram => {
+        Model::Bigram { vocab_file } => {
             // Load the data
-            let data = load_file();
+            let data = load_file(&vocab_file);
             // build the vocabulary
             let vocab = Vocab::new(&data);
             (
-                Box::new(nanogptrs::model::BigramLanguageModel::new(
+                Box::new(nanogptrs::model::bigram::BigramLanguageModel::new(
                     &vs.root(),
                     vocab.size() as i64,
                 )),
@@ -557,8 +619,8 @@ fn learn<R: Rng>(
     let LearnConfig {
         n_epochs,
         lr,
-        steps_between_loss_estimation,
-        loss_estimation_steps,
+        mut steps_between_loss_estimation,
+        mut loss_estimation_steps,
         max_grad_norm,
     } = learn_config;
 
@@ -568,9 +630,25 @@ fn learn<R: Rng>(
 
     let batches_per_epoch = train_dataloader.n_batches();
 
-    pb_reporter.epoch_start(n_epochs, batches_per_epoch);
-
     let n_steps = (batches_per_epoch as f32 * n_epochs) as usize;
+
+    // adjust the steps between loss estimation if necessary
+    if n_steps <= steps_between_loss_estimation {
+        println!(
+            "[i] steps between loss estimation ({}) is larger than the number of steps ({}). Adjusting.",
+            steps_between_loss_estimation, n_steps);
+        steps_between_loss_estimation = n_steps / 5;
+    }
+
+    // adjust the loss estimation steps if necessary
+    if loss_estimation_steps > steps_between_loss_estimation {
+        println!(
+            "[i] loss estimation steps ({}) is larger than the steps between loss estimation ({}). Adjusting.",
+            loss_estimation_steps, steps_between_loss_estimation);
+        loss_estimation_steps = steps_between_loss_estimation / 10;
+    }
+
+    pb_reporter.epoch_start(n_epochs, batches_per_epoch);
 
     train_dataloader.shuffle(&mut rng);
 

@@ -1,3 +1,4 @@
 /target
 torch
 models/gpt*
+models/*.safetensors

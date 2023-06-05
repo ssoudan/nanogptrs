@@ -22,7 +22,7 @@ rand = "0.8.5"
 rand_chacha = "0.3.1"
 indicatif = { version = "0.17.5", features = ["improved_unicode"] }
 tokenizers = { version = "*" }
-clap = { version = "4.3.0", features = ["derive"] }
+clap = { version = "4.3.1", features = ["derive"] }
 
 [dev-dependencies]
 rand_chacha = "0.3.1"

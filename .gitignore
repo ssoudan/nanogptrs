@@ -2,3 +2,4 @@
 torch
 models/gpt*
 models/*.safetensors
+summaries/

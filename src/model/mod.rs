@@ -1,3 +1,4 @@
+/// Bigram model.
 pub mod bigram;
 
 use std::borrow::Borrow;

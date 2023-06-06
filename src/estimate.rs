@@ -4,29 +4,33 @@ use crate::data::Loader;
 use crate::model::LMModel;
 
 /// Estimates of the loss on the training and validation sets.
+#[derive(Debug, Clone)]
 pub struct LossEstimates {
     /// Loss on the training set.
     pub train_loss: f64,
     /// Loss on the validation set.
     pub valid_loss: f64,
+    /// Current token.
+    pub current_token: usize,
 }
 
 /// Interface for a progress reporter.
+#[allow(unused_variables)]
 pub trait ProgressReporter {
     /// Called at the start of the loss estimation for the training sets.
-    fn train_loss_start(&mut self, total_train_batches: usize);
+    fn train_loss_start(&mut self, total_train_batches: usize) {}
     /// Called to update the progress of the loss estimation for the training
     /// sets.
-    fn train_loss_progress(&mut self, current_train_batches: usize);
+    fn train_loss_progress(&mut self, current_train_batches: usize) {}
     /// Called at the end of the loss estimation for the training sets.
-    fn train_loss_end(&mut self, train_loss: f64);
+    fn train_loss_end(&mut self, train_loss: f64) {}
     /// Called at the start of the loss estimation for the validation sets.
-    fn valid_loss_start(&mut self, total_valid_batches: usize);
+    fn valid_loss_start(&mut self, total_valid_batches: usize) {}
     /// Called to update the progress of the loss estimation for the validation
     /// sets.
-    fn valid_loss_progress(&mut self, current_valid_batches: usize);
+    fn valid_loss_progress(&mut self, current_valid_batches: usize) {}
     /// Called at the end of the loss estimation for the validation sets.
-    fn valid_loss_end(&mut self, valid_loss: f64);
+    fn valid_loss_end(&mut self, valid_loss: f64) {}
 }
 
 /// A progress reporter that does nothing.
@@ -73,6 +77,7 @@ impl<'a> LossEstimator<'a> {
         model: &dyn LMModel,
         train_iters: usize,
         eval_iters: usize,
+        current_token: usize,
         progress_callback: &mut impl ProgressReporter,
     ) -> LossEstimates {
         let mut train_loss = 0.0;
@@ -121,6 +126,7 @@ impl<'a> LossEstimator<'a> {
         progress_callback.valid_loss_end(valid_loss);
 
         LossEstimates {
+            current_token,
             train_loss,
             valid_loss,
         }

@@ -1,17 +1,18 @@
 //! NanoGPTRS: A rust implementation of the NanoGPT
 use std::fmt::Display;
 
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use nanogptrs::data::{load_file, Gpt2Tokenizer, Loader, TokenizedData, Tokenizer, Vocab};
 use nanogptrs::estimate::LossEstimator;
-use nanogptrs::learn::{PbProgressReporter, ProgressReporter};
+use nanogptrs::learn::logger::TensorboardReporter;
+use nanogptrs::learn::{Observer, PbProgressReporter, ProgressReporter};
 use nanogptrs::model::{loss, LMModel, NanoGptConfig};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use tch::nn::{OptimizerConfig, VarStore};
 use tch::Tensor;
 
-// FUTURE(ssoudan): Tensorboard?
 // FUTURE(ssoudan): weight decay
 // FUTURE(ssoudan): lr scheduler
 
@@ -109,6 +110,19 @@ struct TrainingParameters {
     /// Prompt to use for an example after the training
     #[arg(long)]
     prompt: Option<String>,
+
+    /// Rng seed for the dataloader
+    #[arg(long, default_value_t = 142)]
+    dataloader_rng_seed: u64,
+
+    /// Name of the run
+    #[arg(long)]
+    run_name: Option<String>,
+
+    /// Path to the tensorboard directory
+    /// If not provided, no tensorboard logging will be done.
+    #[arg(long)]
+    tensorboard_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -315,6 +329,12 @@ fn main() {
             model,
             training_params,
         } => {
+            let model_name = match &model {
+                Model::NanoGpt { .. } => "nanoGPT".to_string(),
+                Model::Bigram { .. } => "bigram".to_string(),
+                Model::GPT2 { args } => args.size.to_string(),
+            };
+
             // Build the model
             let (model, tokenizer) = create_model(&mut vs, model);
             println!("[+] Got a model and a tokenizer");
@@ -327,8 +347,19 @@ fn main() {
                 println!("[+] Restored the model from the checkpoint")
             }
 
-            println!("[.] Training the model");
-            train(vs, device, model, tokenizer, training_params);
+            let run_name = training_params.run_name.clone().unwrap_or_else(|| {
+                let now: DateTime<Utc> = Utc::now();
+                format!("{}_{}", model_name, now.format("%Y%m%d_%H%M%S"))
+            });
+
+            // only allow [a-zA-Z0-9_-] in the run name
+            let run_name = run_name
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                .collect::<String>();
+
+            println!("[.] Training the model - ®[{}]...", run_name);
+            train(vs, device, run_name, model, tokenizer, training_params);
             println!("[+] Trained the model");
         }
     }
@@ -375,6 +406,7 @@ fn generate(
 fn train(
     mut vs: VarStore,
     device: tch::Device,
+    run_name: String,
     model: Box<dyn LMModel>,
     tokenizer: Box<dyn Tokenizer>,
     training_params: TrainingParameters,
@@ -415,7 +447,7 @@ fn train(
     );
 
     // Shuffle the batches
-    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(123);
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(training_params.dataloader_rng_seed);
 
     train_dataloader.shuffle(&mut rng);
     valid_dataloader.shuffle(&mut rng);
@@ -433,14 +465,14 @@ fn train(
         .sum::<i64>();
     println!("nb parameters: {}", nb_params);
 
-    let xs = Tensor::zeros([1, 1_i64], (tch::Kind::Int, device));
-    let max_len = 100;
-    let ys = model.generate(xs, max_len);
-
-    // decode the generated sequence of tokens
-    let ys: Vec<i64> = Vec::<i64>::try_from(ys.reshape(-1)).unwrap();
-    let decoded = tokenizer.decode(&ys);
-    println!("decoded: {}", decoded);
+    // let xs = Tensor::zeros([1, 1_i64], (tch::Kind::Int, device));
+    // let max_len = 100;
+    // let ys = model.generate(xs, max_len);
+    //
+    // // decode the generated sequence of tokens
+    // let ys: Vec<i64> = Vec::<i64>::try_from(ys.reshape(-1)).unwrap();
+    // let decoded = tokenizer.decode(&ys);
+    // println!("decoded: {}", decoded);
 
     // FUTURE(ssoudan) support half precision training
     // vs.float();
@@ -453,7 +485,10 @@ fn train(
     // });
 
     // Initialize the progress bars
-    let mut pb_reporter = PbProgressReporter::default();
+    let mut observer = Observer::default().with(Box::new(PbProgressReporter::default()));
+    if let Some(tensorboard_dir) = training_params.tensorboard_dir {
+        observer = observer.with(Box::new(TensorboardReporter::new(&tensorboard_dir)));
+    }
 
     let learn_config = LearnConfig {
         n_epochs: training_params.n_epochs,
@@ -469,12 +504,13 @@ fn train(
 
     learn(
         learn_config,
+        run_name,
         &mut train_dataloader,
         &mut valid_dataloader,
         &mut rng,
         &mut vs,
         &model,
-        &mut pb_reporter,
+        &mut observer,
     );
 
     // save the model
@@ -609,12 +645,13 @@ struct LearnConfig {
 #[allow(clippy::borrowed_box)]
 fn learn<R: Rng>(
     learn_config: LearnConfig,
+    run_name: String,
     train_dataloader: &mut Loader,
     valid_dataloader: &mut Loader,
     mut rng: &mut R,
     vs: &mut tch::nn::VarStore,
     model: &Box<dyn LMModel>,
-    pb_reporter: &mut PbProgressReporter,
+    observer: &mut Observer,
 ) {
     let LearnConfig {
         n_epochs,
@@ -631,6 +668,8 @@ fn learn<R: Rng>(
     let batches_per_epoch = train_dataloader.n_batches();
 
     let n_steps = (batches_per_epoch as f32 * n_epochs) as usize;
+    let block_size = train_dataloader.block_size();
+    let batch_size = train_dataloader.batch_size();
 
     // adjust the steps between loss estimation if necessary
     if n_steps <= steps_between_loss_estimation {
@@ -648,7 +687,7 @@ fn learn<R: Rng>(
         loss_estimation_steps = steps_between_loss_estimation / 10;
     }
 
-    pb_reporter.epoch_start(n_epochs, batches_per_epoch);
+    observer.epoch_start(run_name, n_epochs, batches_per_epoch);
 
     train_dataloader.shuffle(&mut rng);
 
@@ -656,7 +695,7 @@ fn learn<R: Rng>(
     // train the model
     let mut opt = tch::nn::Adam::default().build(vs, lr).unwrap();
 
-    pb_reporter.train_start(steps_between_loss_estimation);
+    observer.train_start(steps_between_loss_estimation);
 
     // work in terms of steps and not epochs
     for i in 0..n_steps {
@@ -681,15 +720,15 @@ fn learn<R: Rng>(
         opt.step();
 
         if i % 10 == 0 {
-            pb_reporter.train_progress(i % steps_between_loss_estimation);
-            pb_reporter.epoch_progress(i);
+            observer.train_progress(i % steps_between_loss_estimation);
+            observer.epoch_progress(i);
         }
 
         if (i % steps_between_loss_estimation == 0 && i != 0) || i == n_steps - 1 {
-            pb_reporter.train_end();
+            observer.train_end();
 
             // loss estimation pb_reporter.estimate_start();
-            pb_reporter.estimate_start();
+            observer.estimate_start();
 
             // Reshuffle the batches
             train_dataloader_loss.shuffle(&mut rng);
@@ -702,17 +741,18 @@ fn learn<R: Rng>(
                 loss_estimation_steps, /* use the same number of batches for training and
                                         * validation */
                 loss_estimation_steps,
-                pb_reporter,
+                i * block_size * batch_size, // the current token
+                observer,
             );
 
-            pb_reporter.estimate_end(loss_estimates);
+            observer.estimate_end(loss_estimates);
 
             if i != n_steps - 1 {
-                pb_reporter.train_start(steps_between_loss_estimation);
+                observer.train_start(steps_between_loss_estimation);
             }
         }
     }
     // });
 
-    pb_reporter.epoch_end();
+    observer.epoch_end();
 }

@@ -52,7 +52,7 @@ impl Vocab {
 
 impl Tokenizer for Vocab {
     fn encode(&self, s: &str) -> Vec<i64> {
-        // TODO(ssoudan) return a Result
+        // FUTURE(ssoudan) return a Result
         s.chars().map(|c| self.encode_char(c)).collect()
     }
 
@@ -192,6 +192,16 @@ impl Loader {
     /// Return the number of samples
     pub fn n_samples(&self) -> usize {
         self.n_samples
+    }
+
+    /// Return the block size
+    pub fn block_size(&self) -> usize {
+        self.block_size
+    }
+
+    /// Return the batch size
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
     }
 
     /// Pick a random order for the sequences to be picked to make the batches

@@ -29,7 +29,7 @@ impl ProgressReporter for TensorboardReporter {
         let run_name = format!("run_{}_{}_{}", run_name, n_epochs, batches_per_epochs);
         let logdir = Path::new(&self.base_dir).join(run_name);
         // create a new writer
-        self.writer = Some(SummaryWriter::new(&logdir));
+        self.writer = Some(SummaryWriter::new(logdir));
     }
 
     fn epoch_end(&mut self) {

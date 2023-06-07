@@ -14,3 +14,9 @@ pub mod estimate;
 
 /// The `model` module contains the structs and functions for the model.
 pub mod model;
+
+/// Configuration structs and functions.
+pub mod config;
+
+/// Actions
+pub mod actions;

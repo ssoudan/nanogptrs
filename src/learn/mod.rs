@@ -34,6 +34,7 @@ pub trait ProgressReporter: estimate::ProgressReporter {
 }
 
 /// Training observer.
+#[derive(Default)]
 pub struct Observer {
     reporters: Vec<Box<dyn ProgressReporter>>,
 }
@@ -48,12 +49,6 @@ impl Observer {
     /// Build the observer.
     pub fn build(self) -> Self {
         self
-    }
-}
-
-impl Default for Observer {
-    fn default() -> Self {
-        Self { reporters: vec![] }
     }
 }
 
@@ -181,6 +176,16 @@ impl Default for PbProgressReporter {
             batches_per_epoch: 0,
             train_loss: 0.0,
             valid_loss: 0.0,
+        }
+    }
+}
+
+impl PbProgressReporter {
+    /// Create a new progress reporter from a [`MultiProgress`].
+    pub fn from_mb(mb: MultiProgress) -> Self {
+        PbProgressReporter {
+            mb,
+            ..Default::default()
         }
     }
 }

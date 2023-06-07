@@ -454,7 +454,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_generate() {
-        tch::manual_seed(42);
+        let seed = 1337;
+        tch::manual_seed(seed);
         let device = tch::Device::Cpu;
         let mut vs = tch::nn::VarStore::new(device);
 
@@ -483,8 +484,12 @@ mod tests {
         vs.freeze();
 
         println!("[.] Generating for: [{}]...", prompt);
+        tch::manual_seed(seed);
         let gen = generate(device, model, tokenizer.as_ref(), prompt.to_string(), 10);
         println!("Generated: {}", gen);
-        assert_eq!(gen, " that moral goodness is not tied by a single event")
+        assert_eq!(
+            gen,
+            " discussed as and is concerned with which members of the"
+        )
     }
 }

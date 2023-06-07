@@ -682,15 +682,14 @@ mod tests {
     /// Test shared tensor for linear layer
     #[test]
     fn test_shared_tensor_linear() {
+        let device = tch::Device::Cpu;
         let input_size = 10;
         let output_size = 20;
         let n = 2;
         let batch_size = 2;
 
-        let shared_linear_weight = Tensor::randn(
-            [input_size, n * output_size],
-            (tch::Kind::Float, tch::Device::Cpu),
-        );
+        let shared_linear_weight =
+            Tensor::randn([input_size, n * output_size], (tch::Kind::Float, device));
 
         // transpose
         let shared_linear_weight = shared_linear_weight.transpose(0, 1);
@@ -704,10 +703,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Test forward pass
-        let xs = Tensor::randn(
-            [batch_size, input_size],
-            (tch::Kind::Float, tch::Device::Cpu),
-        );
+        let xs = Tensor::randn([batch_size, input_size], (tch::Kind::Float, device));
 
         let mut ys = Vec::new();
 
@@ -725,7 +721,8 @@ mod tests {
 
     #[test]
     fn test_block() {
-        let vs = nn::VarStore::new(tch::Device::Cpu);
+        let device = tch::Device::Cpu;
+        let vs = nn::VarStore::new(device);
 
         let config = BlockConfig {
             block_size: 1024,

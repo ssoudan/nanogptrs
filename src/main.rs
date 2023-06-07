@@ -109,7 +109,8 @@ fn main() {
                 println!("[+] Restored the model from the checkpoint")
             }
 
-            // freeze?
+            // freeze
+            vs.freeze();
 
             println!("[.] Next token probabilities for: [{}]...", prompt);
             let gen = actions::next_token(device, model, tokenizer, prompt);
@@ -132,7 +133,8 @@ fn main() {
                 println!("[+] Restored the model from the checkpoint")
             }
 
-            // freeze?
+            // freeze
+            vs.freeze();
 
             println!("[.] Generating text: [{}]...", prompt);
             let gen = actions::generate(device, model, tokenizer, prompt, max_len);

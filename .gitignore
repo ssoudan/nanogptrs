@@ -1,4 +1,6 @@
 /target
+data/*.txt
+data/*.json
 torch
 models/gpt*
 models/*.safetensors

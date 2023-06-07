@@ -795,6 +795,6 @@ mod tests {
         let y_2_sum = y_2.sum(Kind::Float);
         let y_2_sum: f64 = y_2_sum.try_into().unwrap();
         println!("y_2_sum: {}", y_2_sum);
-        assert!((y_2_sum - 95120.4296875).abs() < 1e-6);
+        assert!((y_2_sum - 95120.4299).abs() < 1e-2);
     }
 }

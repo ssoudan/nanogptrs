@@ -7,7 +7,8 @@ use nanogptrs::data::{load_file, Gpt2Tokenizer, Loader, TokenizedData, Tokenizer
 use nanogptrs::estimate::LossEstimator;
 use nanogptrs::learn::logger::TensorboardReporter;
 use nanogptrs::learn::{Observer, PbProgressReporter, ProgressReporter};
-use nanogptrs::model::{loss, LMModel, NanoGptConfig};
+use nanogptrs::model::nano::NanoGptConfig;
+use nanogptrs::model::{loss, LanguageModel};
 use rand::Rng;
 use rand_chacha::rand_core::SeedableRng;
 use tch::nn::{OptimizerConfig, VarStore};
@@ -368,10 +369,12 @@ fn main() {
 /// Next token probabilities
 fn next_token(
     device: tch::Device,
-    model: Box<dyn LMModel>,
+    model: Box<dyn LanguageModel>,
     tokenizer: Box<dyn Tokenizer>,
     xs: String,
 ) -> Vec<(String, f64)> {
+    // TODO(ssoudan) ability to insert hooks in the forward pass
+
     // generate some text
     let xs = tokenizer.encode(&xs);
     let xs = Tensor::from_slice(&xs).reshape([1, -1]).to(device);
@@ -387,7 +390,7 @@ fn next_token(
 /// Generate text
 fn generate(
     device: tch::Device,
-    model: Box<dyn LMModel>,
+    model: Box<dyn LanguageModel>,
     tokenizer: Box<dyn Tokenizer>,
     xs: String,
     max_len: usize,
@@ -407,7 +410,7 @@ fn train(
     mut vs: VarStore,
     device: tch::Device,
     run_name: String,
-    model: Box<dyn LMModel>,
+    model: Box<dyn LanguageModel>,
     tokenizer: Box<dyn Tokenizer>,
     training_params: TrainingParameters,
 ) {
@@ -524,7 +527,7 @@ fn train(
     }
 }
 
-fn create_model(vs: &mut VarStore, model: Model) -> (Box<dyn LMModel>, Box<dyn Tokenizer>) {
+fn create_model(vs: &mut VarStore, model: Model) -> (Box<dyn LanguageModel>, Box<dyn Tokenizer>) {
     match model {
         Model::NanoGpt {
             args:
@@ -555,7 +558,7 @@ fn create_model(vs: &mut VarStore, model: Model) -> (Box<dyn LMModel>, Box<dyn T
                 tie_weights,
             };
             (
-                Box::new(nanogptrs::model::NanoGpt::new(&vs.root(), config)),
+                Box::new(nanogptrs::model::nano::NanoGpt::new(&vs.root(), config)),
                 Box::new(vocab),
             )
         }
@@ -627,7 +630,7 @@ fn create_model(vs: &mut VarStore, model: Model) -> (Box<dyn LMModel>, Box<dyn T
             };
 
             (
-                Box::new(nanogptrs::model::NanoGpt::new(&vs.root(), config)),
+                Box::new(nanogptrs::model::nano::NanoGpt::new(&vs.root(), config)),
                 Box::new(tokenizer),
             )
         }
@@ -650,7 +653,7 @@ fn learn<R: Rng>(
     valid_dataloader: &mut Loader,
     mut rng: &mut R,
     vs: &mut tch::nn::VarStore,
-    model: &Box<dyn LMModel>,
+    model: &Box<dyn LanguageModel>,
     observer: &mut Observer,
 ) {
     let LearnConfig {

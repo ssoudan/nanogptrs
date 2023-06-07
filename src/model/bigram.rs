@@ -1,6 +1,6 @@
 use tch::{nn, IndexOp, Tensor};
 
-use crate::model::LMModel;
+use crate::model::LanguageModel;
 
 /// BigramLanguageModel is a language model that uses the current token to
 /// predict the next token.
@@ -25,7 +25,7 @@ impl BigramLanguageModel {
     }
 }
 
-impl LMModel for BigramLanguageModel {
+impl LanguageModel for BigramLanguageModel {
     fn generate(&self, xs: Tensor, max_len: i64) -> Tensor {
         let mut xs = xs;
         for _ in 0..max_len {

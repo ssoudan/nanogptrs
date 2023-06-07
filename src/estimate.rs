@@ -1,7 +1,7 @@
 use tch::Tensor;
 
 use crate::data::Loader;
-use crate::model::LMModel;
+use crate::model::LanguageModel;
 
 /// Estimates of the loss on the training and validation sets.
 #[derive(Debug, Clone)]
@@ -74,7 +74,7 @@ impl<'a> LossEstimator<'a> {
     /// Estimate the loss of a model on the training and validation sets.
     pub fn estimate_loss(
         &mut self,
-        model: &dyn LMModel,
+        model: &dyn LanguageModel,
         train_iters: usize,
         eval_iters: usize,
         current_token: usize,

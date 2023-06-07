@@ -28,6 +28,7 @@ chrono = { version = "0.4.26", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 rand_chacha = "0.3.1"
+serial_test = "*"
 
 [profile.release]
 opt-level = 3

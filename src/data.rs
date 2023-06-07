@@ -20,9 +20,6 @@ pub trait Tokenizer {
 
     /// Decode a string
     fn decode(&self, v: &[i64]) -> String;
-
-    /// Returns the vocabulary
-    fn vocab(&self) -> Vec<String>;
 }
 
 impl Vocab {
@@ -58,10 +55,6 @@ impl Tokenizer for Vocab {
 
     fn decode(&self, v: &[i64]) -> String {
         v.iter().map(|&i| self.decode_char(i)).collect()
-    }
-
-    fn vocab(&self) -> Vec<String> {
-        self.chars.iter().map(|&c| c.to_string()).collect()
     }
 }
 
@@ -277,16 +270,6 @@ impl Tokenizer for Gpt2Tokenizer {
     fn decode(&self, v: &[i64]) -> String {
         let v: Vec<u32> = v.iter().map(|&x| x as u32).collect();
         self.tokenizer.decode(v, false).unwrap()
-    }
-
-    fn vocab(&self) -> Vec<String> {
-        (0..self.tokenizer.get_vocab_size(true))
-            .map(|i| {
-                self.tokenizer
-                    .id_to_token(i as u32)
-                    .unwrap_or_else(|| "???".to_string())
-            })
-            .collect()
     }
 }
 

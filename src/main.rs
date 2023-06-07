@@ -34,6 +34,10 @@ enum Action {
         /// The prompt to use
         #[arg(long, default_value = "Once upon a time ")]
         prompt: String,
+
+        /// Seed for the random number generator
+        #[arg(long, default_value = "42")]
+        seed: i64,
     },
     /// Train the model
     Train {
@@ -53,6 +57,7 @@ impl Default for Action {
             model: Model::default(),
             max_len: 128,
             prompt: "Once upon a time ".to_string(),
+            seed: 1337,
         }
     }
 }
@@ -113,14 +118,18 @@ fn main() {
             vs.freeze();
 
             println!("[.] Next token probabilities for: [{}]...", prompt);
-            let gen = actions::next_token(device, model, tokenizer, prompt);
+            let gen = actions::next_token(device, model, tokenizer.as_ref(), prompt);
             println!("[+] distribution: {:#?}", gen);
         }
         Action::Generate {
             model,
             max_len,
             prompt,
+            seed,
         } => {
+            // setting the seed
+            tch::manual_seed(seed);
+
             // Build the model
             let (model, tokenizer) = actions::create_model(&mut vs, model);
             println!("[+] Got a model and a tokenizer");
@@ -137,7 +146,7 @@ fn main() {
             vs.freeze();
 
             println!("[.] Generating text: [{}]...", prompt);
-            let gen = actions::generate(device, model, tokenizer, prompt, max_len);
+            let gen = actions::generate(device, model, tokenizer.as_ref(), prompt, max_len);
             println!("[+] Generated text: {}", gen);
         }
         Action::Train {

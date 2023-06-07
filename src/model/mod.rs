@@ -36,113 +36,6 @@ impl From<&MultiHeadSelfAttentionConfig> for HeadConfig {
     }
 }
 
-/// One head self-attention.
-#[derive(Debug)]
-struct Head {
-    // key: nn::Linear,
-    // query: nn::Linear,
-    // value: nn::Linear,
-    c_attn: nn::Linear,
-    mask: Tensor,
-    dropout: f64,
-    head_size: i64,
-}
-
-#[allow(unused)]
-impl Head {
-    /// Create a new Head.
-    ///
-    /// # Arguments
-    /// * `vs` - The path to the module.
-    /// * `config` - The configuration. See [`HeadConfig`].
-    ///
-    /// # Returns
-    /// A new Head.
-    ///
-    /// # Notes
-    /// The input of `forward` is expected to be of shape `[batch_size,
-    /// block_size, C]`.
-    pub fn new<'a, T: Borrow<nn::Path<'a>>>(vs: T, config: HeadConfig) -> Self {
-        let HeadConfig {
-            head_size,
-            block_size,
-            n_embd,
-            bias,
-            dropout,
-        } = config;
-
-        let vs = vs.borrow();
-
-        let device = vs.device();
-
-        // single qkv linear layer and split
-        let c_attn = nn::linear(
-            vs / "c_attn",
-            n_embd,
-            head_size * 3,
-            nn::LinearConfig {
-                bias,
-                ..Default::default()
-            },
-        );
-
-        let mask = Tensor::ones(
-            [(block_size as i64), (block_size as i64)],
-            (tch::Kind::Float, device),
-        )
-        .tril(0);
-        Self {
-            // key,
-            // query,
-            // value,
-            c_attn,
-            mask,
-            head_size,
-            dropout,
-        }
-    }
-}
-
-impl nn::ModuleT for Head {
-    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
-        let (b, t, _c) = xs.size3().unwrap();
-        let head_size = self.head_size;
-
-        // the dimension of the keys
-        let d_k = head_size;
-
-        // use a single linear layer and split (in q, k, v order)
-        let c_attn = xs.apply(&self.c_attn); // [b, t, head_size * 3]
-        let qkv = c_attn.split(self.head_size, 2); // 3 * [b, t, head_size]
-        let q = &qkv[0];
-        let k = &qkv[1];
-        let v = &qkv[2];
-
-        // let k = xs.apply(&k); // [b, t, head_size]
-        assert_eq!(k.size(), &[b, t, head_size]);
-        // let q = xs.apply(&self.query); // [b, t, head_size]
-        assert_eq!(q.size(), &[b, t, head_size]);
-        // let v = xs.apply(&self.value); // [b, t, head_size]
-        assert_eq!(v.size(), &[b, t, head_size]);
-
-        // Attention scores
-        let wei = q.matmul(&k.transpose(-2, -1)) / (d_k as f64).sqrt();
-        let wei = wei.masked_fill(&self.mask.i((..t, ..t)).eq(0.), f64::NEG_INFINITY);
-        assert_eq!(wei.size(), &[b, t, t]);
-
-        let wei = wei.softmax(-1, tch::Kind::Float);
-        assert_eq!(wei.size(), &[b, t, t]);
-
-        let wei = wei.dropout(self.dropout, train);
-
-        // weighted aggregation of the values
-        let out = wei.matmul(v); // [b, t, head_size]
-        assert_eq!(out.size(), &[b, t, head_size]);
-
-        out
-    }
-}
-
 /// Configuration for the MultiHeadSelfAttention layer.
 #[derive(Debug, Clone, Copy)]
 pub struct MultiHeadSelfAttentionConfig {
@@ -302,7 +195,7 @@ impl nn::ModuleT for MultiHeadSelfAttention {
         assert_eq!(v.size(), &[b, self.n_head, t, self.head_size]);
 
         // compute attention score
-        let wei = q.matmul(&k.transpose(-2, -1)) / (self.head_size as f64).sqrt(); // [b, n_head, t, t]
+        let wei = q.matmul(&k.transpose(-2, -1)) * (1. / (self.head_size as f64).sqrt()); // [b, n_head, t, t]
         assert_eq!(wei.size(), &[b, self.n_head, t, t]);
         let wei = wei.masked_fill(&self.mask.i((.., .., ..t, ..t)).eq(0.), f64::NEG_INFINITY);
         let wei = wei.softmax(-1, Kind::Float); // FUTURE(ssoudan) Float?
@@ -624,12 +517,16 @@ impl Block {
 
 impl nn::ModuleT for Block {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        let (b, t, n_embd) = xs.size3().unwrap();
         // SA heads with residual connection
         let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.attn, train);
+        assert_eq!(xs.size(), &[b, t, n_embd]);
         // [b, t, n_embd]
 
         // Feed forward layer with residual connection
-        &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.mlp, train)
+        let xs = &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.mlp, train);
+        assert_eq!(xs.size(), &[b, t, n_embd]);
+        xs
         // [b, t, n_embd]
     }
 }
@@ -679,10 +576,108 @@ pub fn loss(logits: &Tensor, targets: &Tensor) -> Tensor {
         .cross_entropy_for_logits(&targets.view([b * t]))
 }
 
+/// Utils to load GPT2 safetensors files.
+pub mod utils {
+    use tch::nn;
+    use tch::nn::VarStore;
+
+    /// Load tensors from a file and transpose them if needed.
+    pub fn load_safetensors(
+        mut vs: VarStore,
+        var_to_transpose: &[&str; 4],
+        source: &str,
+        prefix: &str,
+    ) -> VarStore {
+        let mut load_vs = nn::VarStore::new(tch::Device::Cpu);
+        // recreate the variables with the same name in vs2
+        prepare_to_load(&mut load_vs, &mut vs, var_to_transpose, prefix);
+        let _ = load_vs.load_partial(source);
+
+        // print the values of the variables in vs
+        for (name, variable) in load_vs.variables() {
+            println!("{}: {:?}", name, variable);
+        }
+
+        // copy the values from vs2 to vs
+        copy_from(&mut load_vs, &mut vs, var_to_transpose, prefix);
+        vs
+    }
+
+    fn copy_from(
+        source: &mut VarStore,
+        dest: &mut VarStore,
+        var_to_transpose: &[&str; 4],
+        prefix: &str,
+    ) {
+        for (name, mut variable) in dest.variables() {
+            let name_slit = name.split('.');
+            let var_name = name_slit.clone().last().unwrap();
+
+            let vs2_root = name_slit
+                .clone()
+                .take(name_slit.clone().count() - 1)
+                .fold(source.root(), |vs, name| vs / name);
+
+            let vs2_var = vs2_root.get(var_name).unwrap();
+
+            // remove the prefix
+            let name = name.strip_prefix(prefix).unwrap_or_else(|| name.as_ref());
+            // transpose if needed
+            if var_to_transpose.contains(&name) {
+                let vs2_var = vs2_var.transpose(0, 1);
+                tch::no_grad(|| variable.copy_(&vs2_var));
+            } else {
+                tch::no_grad(|| variable.copy_(&vs2_var));
+            }
+        }
+    }
+
+    /// populate a varstore with the same variables as vs (transposed if
+    /// needed)
+    fn prepare_to_load(
+        new_store: &mut VarStore,
+        vs: &mut VarStore,
+        var_to_transpose: &[&str],
+        prefix: &str,
+    ) {
+        for (name, variable) in vs.variables() {
+            // skip variables that do not start with prefix
+            if !name.starts_with(prefix) {
+                continue;
+            }
+
+            // remove prefix for the comparison in the next step
+            let name_ = name.strip_prefix(prefix).unwrap_or_else(|| name.as_ref());
+
+            let dims = if var_to_transpose.contains(&name_) {
+                let dims = variable.size();
+                vec![dims[1], dims[0]]
+            } else {
+                variable.size()
+            };
+
+            let p = name.split('.');
+            let split_count = p.clone().count();
+            let var_name = p.last().unwrap();
+            let p = name.split('.');
+            // remove last element
+            let p = p.take(split_count - 1);
+            let vs_var = p.fold(new_store.root(), |vs, name| vs / name);
+
+            // create the variable with the same name in vs2 with the same size - transpose
+            // if needed
+            let _ = vs_var.ones_no_train(var_name, &dims);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use tch::nn::Module;
-    use tch::{nn, Tensor};
+    use tch::nn::{Module, ModuleT};
+    use tch::{nn, Kind, Tensor};
+
+    use crate::model::utils::load_safetensors;
+    use crate::model::{Block, BlockConfig};
 
     /// Test shared tensor for linear layer
     #[test]
@@ -699,6 +694,7 @@ mod tests {
 
         // transpose
         let shared_linear_weight = shared_linear_weight.transpose(0, 1);
+        assert_eq!(shared_linear_weight.size(), [n * output_size, input_size]);
 
         let linear_weights = shared_linear_weight.split(output_size, 0);
 
@@ -725,5 +721,83 @@ mod tests {
 
         assert_eq!(ys[0].size(), [batch_size, output_size]);
         assert_eq!(ys[1].size(), [batch_size, output_size]);
+    }
+
+    #[test]
+    fn test_block() {
+        let vs = nn::VarStore::new(tch::Device::Cpu);
+
+        let config = BlockConfig {
+            block_size: 1024,
+            n_embd: 768,
+            head_size: 768 / 12,
+            n_head: 12,
+            bias: true,
+            dropout: 0.0,
+        };
+
+        let prefix = "h.0";
+        let prefix_ = prefix.clone().split('.');
+        let root = prefix_.fold(vs.root(), |vs, name| vs / name);
+
+        let block = Block::new(root.clone(), config);
+
+        let input_size = 128;
+
+        let var_to_transpose = [
+            "attn.c_attn.weight",
+            "attn.c_proj.weight",
+            "mlp.c_fc.weight",
+            "mlp.c_proj.weight",
+        ];
+
+        // print h.0.ln_1.weight in the varstore
+        // let var_name = "ln_1.weight";
+        // let vs_var = vs
+        //     .root()
+        //     .sub("h")
+        //     .sub("0")
+        //     .sub("ln_1")
+        //     .get("weight")
+        //     .unwrap();
+        // println!(
+        //     "before loading: {} in {}",
+        //     var_name,
+        //     vs_var.i(..10).to_string(2).unwrap()
+        // );
+
+        let source = "models/gpt2/model.safetensors";
+        let vs = load_safetensors(vs, &var_to_transpose, source, prefix);
+
+        // print h.0.ln_1.weight in the varstore
+        // let var_name = "ln_1.weight";
+        // let vs_var = vs
+        //     .root()
+        //     .sub("h")
+        //     .sub("0")
+        //     .sub("ln_1")
+        //     .get("weight")
+        //     .unwrap();
+        // println!(
+        //     "after loading: {} in {}",
+        //     var_name,
+        //     vs_var.i(..10).to_string(2).unwrap()
+        // );
+
+        // now we can use the block
+        let x = vs.root().ones_no_train("x", &[1, input_size, 768]);
+
+        let x_sum = x.sum(Kind::Float);
+        let x_sum: f64 = x_sum.try_into().unwrap();
+        println!("x_sum: {}", x_sum);
+        assert!((x_sum - 98304.0).abs() < 1e-6);
+
+        let y_2 = block.forward_t(&x, false);
+        assert_eq!(y_2.size(), &[1, input_size, 768]);
+
+        let y_2_sum = y_2.sum(Kind::Float);
+        let y_2_sum: f64 = y_2_sum.try_into().unwrap();
+        println!("y_2_sum: {}", y_2_sum);
+        assert!((y_2_sum - 95120.4296875).abs() < 1e-6);
     }
 }

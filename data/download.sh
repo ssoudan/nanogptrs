@@ -11,7 +11,7 @@ function download_if_not_exists() {
 }
 
 mkdir -p $DIR/$g
-download_if_not_exists https://github.com/matthewreagan/WebstersEnglishDictionary/blob/master/dictionary_compact.json $DIR/dictionary_compact.json
+#download_if_not_exists https://github.com/matthewreagan/WebstersEnglishDictionary/blob/master/dictionary_compact.json $DIR/dictionary_compact.json
 download_if_not_exists https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt $DIR/input.txt
 
 echo "Done!"

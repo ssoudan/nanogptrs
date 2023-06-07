@@ -21,7 +21,7 @@ pub struct NanoGpt {
     /// Layers
     layers: nn::SequentialT,
     /// Layer normalization
-    ln: LayerNorm,
+    ln_f: LayerNorm,
     /// Dropout probability
     dropout: f64,
 }
@@ -94,7 +94,7 @@ impl NanoGpt {
             )
         };
 
-        let ln = LayerNorm::new(
+        let ln_f = LayerNorm::new(
             vs / "ln_f",
             vec![n_embd],
             LayerNormConfig {
@@ -111,7 +111,7 @@ impl NanoGpt {
             n_embd,
             vocab_size,
             block_size,
-            ln,
+            ln_f,
             dropout,
         }
     }
@@ -144,7 +144,7 @@ impl nn::ModuleT for NanoGpt {
         let x = x.apply_t(&self.layers, train); // [batch_size, block_size, n_embd]
 
         // layer norm
-        let x = x.apply_t(&self.ln, train); // [batch_size, block_size, n_embd]
+        let x = x.apply_t(&self.ln_f, train); // [batch_size, block_size, n_embd]
 
         // lm head
         let x = x.apply_t(&self.lm_head, train); // [batch_size, block_size, vocab_size]
@@ -187,8 +187,10 @@ impl LanguageModel for NanoGpt {
     }
 
     fn probabilities(&self, xs: &Tensor) -> Tensor {
+        let (b, _t) = xs.size2().unwrap();
         // take the last logits
         let logits = self.forward_t(xs, false).i((.., -1, ..));
+        assert_eq!(logits.size(), &[b, self.vocab_size]);
         //  apply softmax to get the probabilities of the next token
         logits.softmax(-1, tch::Kind::Float).detach()
     }
@@ -231,7 +233,6 @@ mod tests {
         let model = NanoGpt::new(&vs.root(), config);
         let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size as i64, block_size as i64]);
-        println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
         assert_eq!(b, batch_size as i64);
         assert_eq!(t, block_size as i64);
@@ -274,7 +275,6 @@ mod tests {
         let model = NanoGpt::new(&vs.root(), config);
         let xs = Tensor::from_slice(&[0, 1, 2, 3, 4, 5]).to_kind(tch::Kind::Int);
         let xs = xs.view([batch_size, block_size as i64 - 2]);
-        println!("xs: {:?}", xs);
         let (b, t) = xs.size2().unwrap();
         assert_eq!(b, batch_size);
         assert_eq!(t, block_size as i64 - 2);

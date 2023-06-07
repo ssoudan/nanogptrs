@@ -14,9 +14,9 @@ use crate::model::{loss, LanguageModel};
 pub fn next_token(
     device: tch::Device,
     model: Box<dyn LanguageModel>,
-    tokenizer: Box<dyn Tokenizer>,
+    tokenizer: &dyn Tokenizer,
     xs: String,
-) -> Vec<(String, f64)> {
+) -> Vec<(usize, f64)> {
     // TODO(ssoudan) ability to insert hooks in the forward pass
 
     // generate some text
@@ -25,17 +25,15 @@ pub fn next_token(
     let probs = model.probabilities(&xs);
     let probs: Vec<f64> = probs.to(tch::Device::Cpu).reshape(-1).try_into().unwrap();
 
-    let vocab = tokenizer.vocab();
-
     // zip the vocab and the probs
-    vocab.into_iter().zip(probs.into_iter()).collect::<Vec<_>>()
+    probs.into_iter().enumerate().collect::<Vec<_>>()
 }
 
 /// Generate text
 pub fn generate(
     device: tch::Device,
     model: Box<dyn LanguageModel>,
-    tokenizer: Box<dyn Tokenizer>,
+    tokenizer: &dyn Tokenizer,
     xs: String,
     max_len: usize,
 ) -> String {
@@ -166,7 +164,7 @@ pub fn train(
     }
 
     if let Some(prompt) = training_params.prompt {
-        let gen = generate(device, model, tokenizer, prompt.clone(), 500);
+        let gen = generate(device, model, tokenizer.as_ref(), prompt.clone(), 500);
         println!("[i] after training: [{}]...{}", prompt, gen);
     }
 }
@@ -399,4 +397,94 @@ pub fn learn<R: Rng>(
     // });
 
     observer.epoch_end();
+}
+
+#[cfg(test)]
+mod tests {
+    use serial_test::serial;
+
+    use super::*;
+
+    #[test]
+    fn test_next_tokens() {
+        let mut vs = tch::nn::VarStore::new(tch::Device::Cpu);
+
+        let device = tch::Device::Cpu;
+        tch::manual_seed(42);
+
+        let prompt = "The meaning of life is";
+
+        let model = Model::GPT2 {
+            args: GPT2Args {
+                size: Gpt2Size::Normal,
+                tokenizer_path: "models/gpt2/tokenizer.json".to_string(),
+            },
+        };
+        // Build the model
+        let (model, tokenizer) = create_model(&mut vs, model);
+        println!("[+] Got a model and a tokenizer");
+
+        let input = tokenizer.encode(prompt);
+        println!("[+] Encoded the prompt: {:?}", input);
+
+        // Restore the model from the checkpoint
+        println!("[.] Restoring the model from the checkpoint");
+        // Restore the model from the checkpoint
+        vs.load("models/gpt2/model.safetensors").unwrap();
+        println!("[+] Restored the model from the checkpoint");
+
+        // freeze
+        vs.freeze();
+
+        println!("[.] Next token probabilities for: [{}]...", prompt);
+        let gen = next_token(device, model, tokenizer.as_ref(), prompt.to_string());
+        // argmax
+        let (id, prob) = gen
+            .iter()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .unwrap();
+        println!("Argmax: ({}) with probability: {}", id, prob);
+
+        // decode
+        let decoded = tokenizer.decode(&[*id as i64]);
+        println!("Decoded: {}", decoded);
+        assert_eq!(decoded, " not")
+    }
+
+    #[test]
+    #[serial]
+    fn test_generate() {
+        tch::manual_seed(42);
+        let device = tch::Device::Cpu;
+        let mut vs = tch::nn::VarStore::new(device);
+
+        let prompt = "The meaning of life is";
+
+        let model = Model::GPT2 {
+            args: GPT2Args {
+                size: Gpt2Size::Normal,
+                tokenizer_path: "models/gpt2/tokenizer.json".to_string(),
+            },
+        };
+        // Build the model
+        let (model, tokenizer) = create_model(&mut vs, model);
+        println!("[+] Got a model and a tokenizer");
+
+        let input = tokenizer.encode(prompt);
+        println!("[+] Encoded the prompt: {:?}", input);
+
+        // Restore the model from the checkpoint
+        println!("[.] Restoring the model from the checkpoint");
+        // Restore the model from the checkpoint
+        vs.load("models/gpt2/model.safetensors").unwrap();
+        println!("[+] Restored the model from the checkpoint");
+
+        // freeze
+        vs.freeze();
+
+        println!("[.] Generating for: [{}]...", prompt);
+        let gen = generate(device, model, tokenizer.as_ref(), prompt.to_string(), 10);
+        println!("Generated: {}", gen);
+        assert_eq!(gen, " that moral goodness is not tied by a single event")
+    }
 }

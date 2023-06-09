@@ -123,7 +123,10 @@ impl TokenizedData {
     ) -> Self {
         let data = tokenizer.encode(data);
 
-        let data = Tensor::from_slice(&data).to_device(device).to_kind(kind);
+        // will get moved to the GPU later
+        let data = Tensor::from_slice(&data)
+            .to_device(Device::Cpu)
+            .to_kind(kind);
 
         Self {
             data,

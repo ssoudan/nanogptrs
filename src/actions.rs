@@ -1,9 +1,9 @@
 use rand::{Rng, SeedableRng};
 use tch::nn::{OptimizerConfig, VarStore};
-use tch::Tensor;
+use tch::{Device, Tensor};
 
 use crate::config::{GPT2Args, Gpt2Size, LearnConfig, Model, NanoGptArgs, TrainingParameters};
-use crate::data::{load_file, Gpt2Tokenizer, Loader, TokenizedData, Tokenizer, Vocab};
+use crate::data::{load_file, Gpt2Tokenizer, Loader, Tokenizer, Vocab};
 use crate::estimate::LossEstimator;
 use crate::learn::logger::TensorboardReporter;
 use crate::learn::{Observer, PbProgressReporter, ProgressReporter};
@@ -56,31 +56,8 @@ pub fn train(
     tokenizer: Box<dyn Tokenizer>,
     training_params: TrainingParameters,
 ) {
-    // Load the data
-    let data = load_file(&training_params.dataset_path);
-    println!("data.len(): {}", data.len());
-
-    // print the first 200 characters
-    println!("first 200 chars:\n----\n{}\n----\n", &data[0..1000]);
-
-    // Split the data into training and validation sets
-    let n = data.len() * 9 / 10;
-    let train_data = &data[0..n];
-    let valid_data = &data[n..];
-
-    println!("train_data.len(): {}", train_data.len());
-    println!("valid_data.len(): {}", valid_data.len());
-
-    let kind = tch::Kind::Int;
-
-    let train_data = TokenizedData::new(train_data, tokenizer.as_ref(), device, kind);
-    let valid_data = TokenizedData::new(valid_data, tokenizer.as_ref(), device, kind);
-
-    let block_size = model.block_size();
-    let batch_size = training_params.batch_size;
-
-    let mut train_dataloader = Loader::from_tokenized_data(train_data, block_size, batch_size);
-    let mut valid_dataloader = Loader::from_tokenized_data(valid_data, block_size, batch_size);
+    let (mut train_dataloader, mut valid_dataloader) =
+        data_loaders(device, model.as_ref(), tokenizer.as_ref(), &training_params);
 
     println!(
         "train_dataloader.n_batches(): {}",
@@ -169,6 +146,47 @@ pub fn train(
     }
 }
 
+fn data_loaders(
+    device: Device,
+    model: &dyn LanguageModel,
+    tokenizer: &dyn Tokenizer,
+    training_params: &TrainingParameters,
+) -> (Loader, Loader) {
+    // Load the data
+    let data = load_file(&training_params.dataset_path);
+    println!("data.len(): {}", data.len());
+
+    // print the first 200 characters
+    println!("first 200 chars:\n----\n{}\n----\n", &data[0..1000]);
+
+    let (train_data, valid_data) =
+        if let Some(validation_dataset_path) = &training_params.validation_dataset_path {
+            println!("validation_dataset_path: {}", validation_dataset_path);
+            let valid_data = load_file(validation_dataset_path);
+            println!("validation_data.len(): {}", valid_data.len());
+            (data, valid_data)
+        } else {
+            // Split the data into training and validation sets
+            let n = data.len() * 9 / 10;
+            let train_data = data[0..n].to_string();
+            let valid_data = data[n..].to_string();
+            (train_data, valid_data)
+        };
+
+    println!("train_data.len(): {}", train_data.len());
+    println!("valid_data.len(): {}", valid_data.len());
+
+    let kind = tch::Kind::Int;
+    let block_size = model.block_size();
+    let batch_size = training_params.batch_size;
+
+    let train_dataloader =
+        Loader::new(&train_data, tokenizer, block_size, batch_size, device, kind);
+    let valid_dataloader =
+        Loader::new(&valid_data, tokenizer, block_size, batch_size, device, kind);
+    (train_dataloader, valid_dataloader)
+}
+
 /// Create the model from the model parameters
 pub fn create_model(
     vs: &mut VarStore,
@@ -188,10 +206,11 @@ pub fn create_model(
                     vocab_file,
                 },
         } => {
-            // Load the data
-            let data = load_file(&vocab_file);
+            // TODO(ssoudan) option to use BPE tokenizer
+
+            println!("vocab_file: {}", vocab_file);
             // build the vocabulary
-            let vocab = Vocab::new(&data);
+            let vocab = Vocab::from_file(&vocab_file);
 
             let config = NanoGptConfig {
                 vocab_size: vocab.size() as i64,

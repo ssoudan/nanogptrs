@@ -182,7 +182,7 @@ fn main() {
                 .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
                 .collect::<String>();
 
-            println!("[.] Training the model - ®[{}]...", run_name);
+            println!("[.] Training the model - [{}]...", run_name);
             actions::train(vs, device, run_name, model, tokenizer, training_params);
             println!("[+] Trained the model");
         }

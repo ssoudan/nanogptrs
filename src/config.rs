@@ -92,6 +92,10 @@ pub struct TrainingParameters {
     #[arg(long, default_value = "data/input.txt")]
     pub dataset_path: String,
 
+    /// Validation dataset path
+    #[arg(long)]
+    pub validation_dataset_path: Option<String>,
+
     /// Prompt to use for an example after the training
     #[arg(long)]
     pub prompt: Option<String>,

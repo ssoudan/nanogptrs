@@ -1293,6 +1293,7 @@ dependencies = [
  "itertools 0.10.5",
  "rand",
  "rand_chacha",
+ "rayon",
  "serial_test",
  "tch",
  "tensorboard-rs",

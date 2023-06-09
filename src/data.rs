@@ -5,6 +5,7 @@ use std::io::BufRead;
 use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use rand::prelude::*;
+use rayon::prelude::*;
 use tch::{Device, Tensor};
 
 /// Load data/input.txt and return a string
@@ -20,7 +21,7 @@ pub struct Vocab {
 
 // FUTURE(ssoudan) template the String part
 /// A tokenizer
-pub trait Tokenizer {
+pub trait Tokenizer: Sync {
     /// Encode a string
     fn encode(&self, s: &str) -> Vec<i64>;
 
@@ -219,14 +220,10 @@ impl Loader {
         device: Device,
         kind: tch::Kind,
     ) -> Self {
+        // split data into blocks of size 16M chars
         const CHUNK_SIZE: usize = 2 << 24; // 16M chars
 
-        // split data into blocks of size 16M chars
-        let mut chunks = Vec::new();
-
         // TODO(ssoudan) observer
-
-        // TODO(ssoudan) rayon
 
         let pb = ProgressBar::new_spinner();
         pb.set_style(
@@ -237,13 +234,28 @@ impl Loader {
         );
         pb.set_message("Tokenizing data");
         pb.set_length(data.len() as u64 / CHUNK_SIZE as u64);
-        for chunk in &data.chars().chunks(CHUNK_SIZE) {
-            let chunk = String::from_iter(chunk);
-            chunks.push(TokenizedData::new(
-                &chunk, tokenizer, device, kind, block_size,
-            ));
-            pb.inc(1);
-        }
+        let chunks = &data
+            .chars()
+            .chunks(CHUNK_SIZE)
+            .into_iter()
+            .map(|chunk| chunk.collect::<String>())
+            .collect::<Vec<_>>();
+
+        let chunks: Vec<_> = chunks
+            .par_iter()
+            .map(|chunk| {
+                let t = TokenizedData::new(chunk, tokenizer, device, kind, block_size);
+                pb.inc(1);
+                t
+            })
+            .collect();
+        // for chunk in &data.chars().par_chunks(CHUNK_SIZE) {
+        //     let chunk = String::from_iter(chunk);
+        //     chunks.push(TokenizedData::new(
+        //         &chunk, tokenizer, device, kind, block_size,
+        //     ));
+        //     pb.inc(1);
+        // }
         pb.finish();
 
         let chunk_samples: Vec<_> = chunks.iter().map(|d| d.sample_count()).collect();

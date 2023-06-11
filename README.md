@@ -18,7 +18,7 @@ Activate conda environment:
 
 ```bash
 rm -f torch # remove symlink if it exists
-conda activate nanoGPT
+conda activate nanogptrs
 TORCH_DIR=$(python3 -c 'import torch; from pathlib import Path; print(Path(torch.__file__).parent)')
 ln -sf $TORCH_DIR torch
 ls -l torch

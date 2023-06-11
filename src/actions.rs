@@ -382,8 +382,10 @@ pub fn learn<R: Rng>(
 
         if i % 10 == 0 {
             observer.train_progress(i % steps_between_loss_estimation);
-            observer.epoch_progress(i);
+            observer.epoch_progress(i); // TODO(ssoudan) count in tokens
         }
+
+        // TODO(ssoudan) save a checkpoint from time to time
 
         if (i % steps_between_loss_estimation == 0 && i != 0) || i == n_steps - 1 {
             observer.train_end();

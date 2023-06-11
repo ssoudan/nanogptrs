@@ -97,6 +97,7 @@ fn main() {
     }
 
     ///////
+    println!("device: {:?}", device);
 
     let mut vs = tch::nn::VarStore::new(device);
 

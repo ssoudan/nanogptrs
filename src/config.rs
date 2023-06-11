@@ -33,11 +33,11 @@ pub struct NanoGptArgs {
     #[arg(short = 'D', long, default_value_t = 0.2)]
     pub dropout: f64,
     /// Biases - default is true
-    #[arg(short = 'B', long, default_value_t = true)]
+    #[arg(short = 'B', long, default_value_t = false)]
     pub bias: bool,
 
     /// Tie the weights of the token embedding and the lm head
-    #[arg(long, default_value_t = true)]
+    #[arg(long, default_value_t = false)]
     pub tie_weights: bool,
 
     /// Vocabulary file

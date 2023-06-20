@@ -2,7 +2,7 @@
 LIBTORCH = { value = "torch", relative = true }
 DYLD_LIBRARY_PATH = { value = "torch/lib", relative = true }
 LD_LIBRARY_PATH = { value = "torch/lib", relative = true }
-LIBTORCH_CXX11_ABI = { value = "0" }
+LIBTORCH_CXX11_ABI = { value = "1" }
 
 [profile.ci]
 failure-output = "immediate-final"

@@ -1,8 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Models from args
 MODELS=$@
-[ -z "$MODELS" ] && MODELS="gpt2 gpt2-medium"
+[ -z "$MODELS" ] && MODELS="gpt2"
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 

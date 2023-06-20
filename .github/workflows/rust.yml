@@ -24,6 +24,10 @@ jobs:
     - name: Install libtorch
       run: sudo unzip /tmp/libtorch.zip -d / && sudo cp /libtorch/lib/* /usr/lib/
     - uses: actions/checkout@v2
+    - name: Download models
+      run: ./models/download.sh
+    - name: Download data
+      run: ./data/download.sh
     - name: Setup symlink
       run: ln -s /libtorch $GITHUB_WORKSPACE/torch
     - name: Install latest nightly

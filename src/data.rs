@@ -1,9 +1,15 @@
+use std::collections::{HashSet, VecDeque};
+use std::fs::File;
+use std::io::BufRead;
+
+use indicatif::{ProgressBar, ProgressStyle};
+use itertools::Itertools;
 use rand::prelude::*;
+use rayon::prelude::*;
 use tch::{Device, Tensor};
 
 /// Load data/input.txt and return a string
-pub fn load_file() -> String {
-    let path = "data/input.txt";
+pub fn load_file(path: &str) -> String {
     std::fs::read_to_string(path).expect("Unable to read file")
 }
 
@@ -13,8 +19,9 @@ pub struct Vocab {
     chars: Vec<char>,
 }
 
+// FUTURE(ssoudan) template the String part
 /// A tokenizer
-pub trait Tokenizer {
+pub trait Tokenizer: Sync {
     /// Encode a string
     fn encode(&self, s: &str) -> Vec<i64>;
 
@@ -31,9 +38,38 @@ impl Vocab {
         Self { chars }
     }
 
+    /// Create a new vocabulary from a file
+    pub fn from_file(path: &str) -> Self {
+        let f = File::open(path).expect("Unable to open file");
+
+        let chars: HashSet<char> = std::io::BufReader::new(f)
+            .lines()
+            .map(|l| l.expect("Unable to read line") + "\n")
+            .map(|l| l.chars().sorted().dedup())
+            .fold(HashSet::new(), |mut acc, x| {
+                acc.extend(x);
+                acc
+            });
+
+        let chars: String = chars.into_iter().sorted().collect();
+
+        println!("chars: {:?}", chars);
+
+        Self::new(&chars)
+    }
+
     /// Encode a character
     fn encode_char(&self, c: char) -> i64 {
-        self.chars.iter().position(|&x| x == c).unwrap() as i64
+        let pos = self.chars.iter().position(|&x| x == c);
+
+        match pos {
+            Some(i) => i as i64,
+            None => panic!(
+                "Character [{}] not found in the vocabulary: {}",
+                c,
+                self.chars.iter().collect::<String>()
+            ),
+        }
     }
 
     /// Decode a character
@@ -45,15 +81,11 @@ impl Vocab {
     pub fn size(&self) -> usize {
         self.chars.len()
     }
-
-    // Return a reference to the characters
-    // fn chars(&self) -> &Vec<char> {
-    //     &self.chars
-    // }
 }
 
 impl Tokenizer for Vocab {
     fn encode(&self, s: &str) -> Vec<i64> {
+        // FUTURE(ssoudan) return a Result
         s.chars().map(|c| self.encode_char(c)).collect()
     }
 
@@ -63,40 +95,82 @@ impl Tokenizer for Vocab {
 }
 
 /// Tokenized data
-pub struct TokenizedData {
+struct TokenizedData {
     data: Tensor,
+    device: Device,
+    order: Option<VecDeque<usize>>,
+    block_size: usize,
 }
 
 impl Clone for TokenizedData {
     fn clone(&self) -> Self {
         Self {
             data: self.data.copy(),
+            device: self.device,
+            block_size: self.block_size,
+            order: None,
         }
     }
 }
 
 impl TokenizedData {
     /// Create a new tokenized data from a string and a vocabulary
-    pub fn new(data: &str, tokenizer: &dyn Tokenizer, device: Device, kind: tch::Kind) -> Self {
+    fn new(
+        data: &str,
+        tokenizer: &dyn Tokenizer,
+        device: Device,
+        kind: tch::Kind,
+        block_size: usize,
+    ) -> Self {
         let data = tokenizer.encode(data);
-        let data = Tensor::from_slice(&data).to_device(device).to_kind(kind);
 
-        Self { data }
+        // will get moved to the GPU later
+        let data = Tensor::from_slice(&data)
+            .to_device(Device::Cpu)
+            .to_kind(kind);
+
+        Self {
+            data,
+            device,
+            order: None,
+            block_size,
+        }
     }
 
-    /// Return the number of tokens
-    pub fn len(&self) -> usize {
-        self.data.size1().unwrap() as usize
-    }
-
-    /// True if the data is empty
-    pub fn is_empty(&self) -> bool {
-        self.data.size1().unwrap() == 0
+    /// Return the number of samples
+    fn sample_count(&self) -> usize {
+        self.data.size1().unwrap() as usize - self.block_size
     }
 
     /// Return a slice of the data
-    pub fn slice(&self, start: usize, end: usize) -> Tensor {
-        self.data.slice(0, start as i64, end as i64, 1)
+    fn next_sample(&mut self) -> Option<(Tensor, Tensor)> {
+        let pos = self.order.as_mut()?.pop_front()?;
+
+        let start = pos as i64;
+        let end = (pos + self.block_size) as i64;
+
+        let sample = self.data.slice(0, start, end, 1);
+        let start = start + 1;
+        let end = end + 1;
+
+        let target = self.data.slice(0, start, end, 1);
+
+        Some((sample, target))
+    }
+
+    fn shuffle<R: Rng>(&mut self, rng: &mut R) {
+        let mut order: Vec<usize> = (0..self.sample_count()).collect();
+        order.shuffle(rng);
+        let order = order.into_iter().collect();
+        self.order = Some(order);
+    }
+
+    fn load(&mut self) {
+        self.data = self.data.to_device(self.device);
+    }
+
+    fn unload(&mut self) {
+        self.data = self.data.to(Device::Cpu);
     }
 }
 
@@ -123,61 +197,82 @@ type Batch = (Tensor, Tensor);
 ///   12]]))
 #[derive(Clone)]
 pub struct Loader {
-    data: TokenizedData,
+    chunks: Vec<TokenizedData>,
+
     batch_size: usize,
     block_size: usize,
     /// The number of (complete) batches
     n_batches: usize,
     /// The number of unique sequences of length `block_size` in the data
     n_samples: usize,
-    /// The order of the batches
-    order: Option<Vec<usize>>,
-    /// The current position in the order
-    pos: usize,
+
+    // Dequeue of the indices of chunks
+    remaining_chunks: VecDeque<usize>,
 }
 
 impl Loader {
     /// Create a new data loader from a string and a vocabulary
     pub fn new(
         data: &str,
-        tokenizer: Box<dyn Tokenizer>,
+        tokenizer: &dyn Tokenizer,
         block_size: usize,
         batch_size: usize,
         device: Device,
         kind: tch::Kind,
     ) -> Self {
-        let tokenized_data = TokenizedData::new(data, tokenizer.as_ref(), device, kind);
+        // split data into blocks of size 16M chars
+        const CHUNK_SIZE: usize = 2 << 24; // 16M chars
+
+        // TODO(ssoudan) observer
+
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("TOKENIZING [{elapsed_precise}] {spinner:.green} [{bar:40.cyan/blue}] {pos:>7}/{len:7} ({eta})")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        pb.set_message("Tokenizing data");
+        pb.set_length(data.len() as u64 / CHUNK_SIZE as u64);
+        let chunks = &data
+            .chars()
+            .chunks(CHUNK_SIZE)
+            .into_iter()
+            .map(|chunk| chunk.collect::<String>())
+            .collect::<Vec<_>>();
+
+        let chunks: Vec<_> = chunks
+            .par_iter()
+            .map(|chunk| {
+                let t = TokenizedData::new(chunk, tokenizer, device, kind, block_size);
+                pb.inc(1);
+                t
+            })
+            .collect();
+        // for chunk in &data.chars().par_chunks(CHUNK_SIZE) {
+        //     let chunk = String::from_iter(chunk);
+        //     chunks.push(TokenizedData::new(
+        //         &chunk, tokenizer, device, kind, block_size,
+        //     ));
+        //     pb.inc(1);
+        // }
+        pb.finish();
+
+        let chunk_samples: Vec<_> = chunks.iter().map(|d| d.sample_count()).collect();
+
         // The number of unique sequences of length `block_size+1` in the data
-        let n_samples = tokenized_data.len() - block_size;
+        let n_samples = chunk_samples.iter().sum();
+
         // The number of (complete) batches
         let n_batches = n_samples / batch_size;
 
         Self {
-            data: tokenized_data,
+            chunks,
             batch_size,
             n_samples,
             n_batches,
             block_size,
-            order: None,
-            pos: 0,
-        }
-    }
-
-    /// Create a new data loader from tokenized data
-    pub fn from_tokenized_data(data: TokenizedData, block_size: usize, batch_size: usize) -> Self {
-        // The number of unique sequences of length `block_size+1` in the data
-        let n_samples = data.len() - block_size;
-        // The number of (complete) batches
-        let n_batches = n_samples / batch_size;
-
-        Self {
-            data,
-            batch_size,
-            n_samples,
-            n_batches,
-            block_size,
-            order: None,
-            pos: 0,
+            remaining_chunks: VecDeque::new(),
         }
     }
 
@@ -191,14 +286,63 @@ impl Loader {
         self.n_samples
     }
 
+    /// Return the block size
+    pub fn block_size(&self) -> usize {
+        self.block_size
+    }
+
+    /// Return the batch size
+    pub fn batch_size(&self) -> usize {
+        self.batch_size
+    }
+
     /// Pick a random order for the sequences to be picked to make the batches
     /// Also reset the position in the order. This means that `n_batches()`
     /// batches are available from here.
     pub fn shuffle<R: Rng>(&mut self, rng: &mut R) {
-        let mut order: Vec<usize> = (0..self.n_samples).collect();
-        order.shuffle(rng);
-        self.order = Some(order);
-        self.pos = 0;
+        // unload the current chunk if any
+        if let Some(current_chunk_idx) = self.remaining_chunks.front() {
+            self.chunks[*current_chunk_idx].unload();
+        }
+
+        // shuffle the chunk order
+        let mut chunks: Vec<usize> = (0..self.chunks.len()).collect();
+
+        chunks.shuffle(rng);
+
+        self.remaining_chunks = VecDeque::from(chunks);
+
+        // shuffle the chunks
+        for chunk in &mut self.chunks {
+            chunk.shuffle(rng);
+        }
+
+        // load the first chunk
+        self.chunks[self.remaining_chunks[0]].load();
+    }
+
+    fn next_sample(&mut self) -> Option<(Tensor, Tensor)> {
+        while let Some(chunk_idx) = self.remaining_chunks.front() {
+            let chunk = &mut self.chunks[*chunk_idx];
+
+            let sample = chunk.next_sample();
+            if sample.is_some() {
+                return sample;
+            }
+
+            // We are done with this chunk
+            // unload it
+            chunk.unload();
+            self.remaining_chunks.pop_front();
+
+            // load the next chunk if any
+            if let Some(next_chunk_idx) = self.remaining_chunks.front() {
+                self.chunks[*next_chunk_idx].load();
+            }
+        }
+
+        // We are done with all the chunks
+        None
     }
 
     /// Returns the next batch
@@ -208,30 +352,11 @@ impl Loader {
         let mut samples = Vec::with_capacity(self.batch_size);
         let mut targets = Vec::with_capacity(self.batch_size);
 
-        // ensure there is enough data left to make a batch
-        if self.pos + self.batch_size > self.n_samples {
-            return None;
+        for _ in 0..self.batch_size {
+            let (sample, target) = self.next_sample()?;
+            samples.push(sample);
+            targets.push(target);
         }
-
-        if let Some(order) = &self.order {
-            for i in 0..self.batch_size {
-                let pos = order[self.pos + i];
-                let sample = self.data.slice(pos, pos + self.block_size);
-                let target = self.data.slice(pos + 1, pos + self.block_size + 1);
-                samples.push(sample);
-                targets.push(target);
-            }
-        } else {
-            for i in 0..self.batch_size {
-                let pos = self.pos + i;
-                let sample = self.data.slice(pos, pos + self.block_size);
-                let target = self.data.slice(pos + 1, pos + self.block_size + 1);
-                samples.push(sample);
-                targets.push(target);
-            }
-        }
-
-        self.pos += self.batch_size;
 
         let samples = Tensor::stack(&samples, 0);
         let targets = Tensor::stack(&targets, 0);
@@ -272,13 +397,6 @@ impl Tokenizer for Gpt2Tokenizer {
 mod tests {
     use super::*;
 
-    fn to_tensor(batches: Vec<Vec<i64>>) -> Tensor {
-        let batch_size = batches.len();
-
-        let data: Vec<i64> = batches.into_iter().flatten().collect();
-        Tensor::from_slice(&data).reshape([batch_size as i64, -1])
-    }
-
     #[test]
     fn test_data_loader() {
         // [0, 1, 2, 3, 4, 5, 6]
@@ -296,7 +414,7 @@ mod tests {
         let tokenizer = Box::new(tokenizer);
         let mut loader = Loader::new(
             data,
-            tokenizer,
+            tokenizer.as_ref(),
             block_size,
             batch_size,
             Device::Cpu,
@@ -306,14 +424,30 @@ mod tests {
         assert_eq!(loader.n_samples(), 4);
         assert_eq!(loader.n_batches(), 2);
 
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
+        loader.shuffle(&mut rng);
+
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples.kind(), tch::Kind::Int64);
-        assert_eq!(samples, to_tensor(vec![vec![0, 1, 2], vec![1, 2, 3]]));
-        assert_eq!(targets, to_tensor(vec![vec![1, 2, 3], vec![2, 3, 4]]));
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&samples).unwrap(),
+            vec![vec![0, 1, 2], vec![2, 3, 4]]
+        );
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&targets).unwrap(),
+            vec![vec![1, 2, 3], vec![3, 4, 5]]
+        );
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples.kind(), tch::Kind::Int64);
-        assert_eq!(samples, to_tensor(vec![vec![2, 3, 4], vec![3, 4, 5]]));
-        assert_eq!(targets, to_tensor(vec![vec![3, 4, 5], vec![4, 5, 6]]));
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&samples).unwrap(),
+            vec![vec![1, 2, 3], vec![3, 4, 5]]
+        );
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&targets).unwrap(),
+            vec![vec![2, 3, 4], vec![4, 5, 6]]
+        );
     }
 
     #[test]
@@ -333,7 +467,7 @@ mod tests {
         let tokenizer = Box::new(tokenizer);
         let mut loader = Loader::new(
             data,
-            tokenizer,
+            tokenizer.as_ref(),
             block_size,
             batch_size,
             Device::Cpu,
@@ -343,10 +477,20 @@ mod tests {
         assert_eq!(loader.n_samples(), 3);
         assert_eq!(loader.n_batches(), 1);
 
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+
+        loader.shuffle(&mut rng);
+
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples.kind(), tch::Kind::Int);
-        assert_eq!(samples, to_tensor(vec![vec![0, 1, 2], vec![1, 2, 3]]));
-        assert_eq!(targets, to_tensor(vec![vec![1, 2, 3], vec![2, 3, 4]]));
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&samples).unwrap(),
+            vec![vec![2, 3, 4], vec![1, 2, 3]]
+        );
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&targets).unwrap(),
+            vec![vec![3, 4, 5], vec![2, 3, 4]]
+        );
         assert!(loader.next_batch().is_none());
     }
 
@@ -367,7 +511,7 @@ mod tests {
         let tokenizer = Box::new(tokenizer);
         let mut loader = Loader::new(
             data,
-            tokenizer,
+            tokenizer.as_ref(),
             block_size,
             batch_size,
             Device::Cpu,
@@ -382,12 +526,24 @@ mod tests {
 
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples.kind(), tch::Kind::Int);
-        assert_eq!(samples, to_tensor(vec![vec![1, 2, 3], vec![0, 1, 2]]));
-        assert_eq!(targets, to_tensor(vec![vec![2, 3, 4], vec![1, 2, 3]]));
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&samples).unwrap(),
+            vec![vec![1, 2, 3], vec![0, 1, 2]]
+        );
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&targets).unwrap(),
+            vec![vec![2, 3, 4], vec![1, 2, 3]]
+        );
         let (samples, targets) = loader.next_batch().unwrap();
         assert_eq!(samples.kind(), tch::Kind::Int);
-        assert_eq!(samples, to_tensor(vec![vec![2, 3, 4], vec![3, 4, 5]]));
-        assert_eq!(targets, to_tensor(vec![vec![3, 4, 5], vec![4, 5, 6]]));
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&samples).unwrap(),
+            vec![vec![2, 3, 4], vec![3, 4, 5]]
+        );
+        assert_eq!(
+            <Vec::<Vec<i64>>>::try_from(&targets).unwrap(),
+            vec![vec![3, 4, 5], vec![4, 5, 6]]
+        );
         assert!(loader.next_batch().is_none());
     }
 }

@@ -1,23 +1,24 @@
 # nanoGPT(rs)
 
-This is a Rust implementation of the nanoGPT model from Andrej Karpathy's YT 
+This is a Rust implementation of the nanoGPT model from Andrej Karpathy's YT
 video: https://www.youtube.com/watch?v=kCc8FmEb1nY&t=12s
 
-With some help from: https://github.com/LaurentMazare/tch-rs/blob/main/examples/min-gpt/main.rs and 
-https://github.com/karpathy/nanoGPT/blob/master/model.py. 
+With some help from: https://github.com/LaurentMazare/tch-rs/blob/main/examples/min-gpt/main.rs and
+https://github.com/karpathy/nanoGPT/blob/master/model.py.
 
 # Setup
+
 Create conda environment:
 
 ```bash
 conda env create -f environment.yml
-``` 
+```
 
 Activate conda environment:
 
 ```bash
 rm -f torch # remove symlink if it exists
-conda activate nanoGPT
+conda activate nanogptrs
 TORCH_DIR=$(python3 -c 'import torch; from pathlib import Path; print(Path(torch.__file__).parent)')
 ln -sf $TORCH_DIR torch
 ls -l torch
@@ -26,8 +27,9 @@ ls -l torch
 # Run - generate from pretrained GPT-2
 
 ```bash
+./data/download.sh
 ./models/download.sh gpt2
-cargo run --release -- --device=cuda --restore-from models/gpt2/model.safetensors generate --max-len 128 gpt2
+cargo run --release -- --device=cuda --restore-from models/gpt2/model.safetensors generate --max-len 32 --prompt "Once upon a time" gpt2
 ```
 
 # Run - train nano-gpt

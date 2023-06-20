@@ -1,9 +1,150 @@
+/// Logger for training.
+pub mod logger;
+
 use std::fmt::Write;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressState, ProgressStyle};
 
 use crate::estimate;
 use crate::estimate::LossEstimates;
+
+/// A trait for reporting progress during training.
+#[allow(unused_variables)]
+pub trait ProgressReporter: estimate::ProgressReporter {
+    /// Called before epoch starts.
+    fn epoch_start(&mut self, run_name: String, n_epochs: f32, batches_per_epochs: usize) {}
+    /// Called when an epoch ends.
+    fn epoch_progress(&mut self, current_epoch: usize) {}
+    /// Called when all epochs have been processed.
+    fn epoch_end(&mut self) {}
+
+    /// Called when the training starts.
+    fn train_start(&mut self, n_train_batches: usize) {}
+    /// Called when some batches have been processed.
+    fn train_progress(&mut self, current_train_batches: usize) {}
+    /// Called when the training ends.
+    fn train_end(&mut self) {}
+
+    /// Called when the loss estimation starts.
+    fn estimate_start(&mut self) {}
+    /// Called when a stage of the loss estimation are completed.
+    fn estimate_progress(&mut self) {}
+    /// Called when the loss estimation ends.
+    fn estimate_end(&mut self, loss_estimates: LossEstimates) {}
+}
+
+/// Training observer.
+#[derive(Default)]
+pub struct Observer {
+    reporters: Vec<Box<dyn ProgressReporter>>,
+}
+
+impl Observer {
+    /// Add a reporter to the observer.
+    pub fn with(mut self, reporter: Box<dyn ProgressReporter>) -> Self {
+        self.reporters.push(reporter);
+        self
+    }
+
+    /// Build the observer.
+    pub fn build(self) -> Self {
+        self
+    }
+}
+
+impl ProgressReporter for Observer {
+    fn epoch_start(&mut self, run_name: String, n_epochs: f32, batches_per_epochs: usize) {
+        for reporter in &mut self.reporters {
+            reporter.epoch_start(run_name.clone(), n_epochs, batches_per_epochs);
+        }
+    }
+
+    fn epoch_progress(&mut self, current_epoch: usize) {
+        for reporter in &mut self.reporters {
+            reporter.epoch_progress(current_epoch);
+        }
+    }
+
+    fn epoch_end(&mut self) {
+        for reporter in &mut self.reporters {
+            reporter.epoch_end();
+        }
+    }
+
+    fn train_start(&mut self, n_train_batches: usize) {
+        for reporter in &mut self.reporters {
+            reporter.train_start(n_train_batches);
+        }
+    }
+
+    fn train_progress(&mut self, current_train_batches: usize) {
+        for reporter in &mut self.reporters {
+            reporter.train_progress(current_train_batches);
+        }
+    }
+
+    fn train_end(&mut self) {
+        for reporter in &mut self.reporters {
+            reporter.train_end();
+        }
+    }
+
+    fn estimate_start(&mut self) {
+        for reporter in &mut self.reporters {
+            reporter.estimate_start();
+        }
+    }
+
+    fn estimate_progress(&mut self) {
+        for reporter in &mut self.reporters {
+            reporter.estimate_progress();
+        }
+    }
+
+    fn estimate_end(&mut self, loss_estimates: LossEstimates) {
+        for reporter in &mut self.reporters {
+            reporter.estimate_end(loss_estimates.clone());
+        }
+    }
+}
+
+impl estimate::ProgressReporter for Observer {
+    fn train_loss_start(&mut self, total_train_batches: usize) {
+        for reporter in &mut self.reporters {
+            reporter.train_loss_start(total_train_batches);
+        }
+    }
+
+    fn train_loss_progress(&mut self, current_train_batches: usize) {
+        for reporter in &mut self.reporters {
+            reporter.train_loss_progress(current_train_batches);
+        }
+    }
+
+    fn train_loss_end(&mut self, train_loss: f64) {
+        for reporter in &mut self.reporters {
+            reporter.train_loss_end(train_loss);
+        }
+    }
+
+    fn valid_loss_start(&mut self, total_valid_batches: usize) {
+        for reporter in &mut self.reporters {
+            reporter.valid_loss_start(total_valid_batches);
+        }
+    }
+
+    fn valid_loss_progress(&mut self, current_valid_batches: usize) {
+        for reporter in &mut self.reporters {
+            reporter.valid_loss_progress(current_valid_batches);
+        }
+    }
+
+    fn valid_loss_end(&mut self, valid_loss: f64) {
+        for reporter in &mut self.reporters {
+            reporter.valid_loss_end(valid_loss);
+        }
+    }
+}
 
 /// Progress reporter that uses the `indicatif` crate to display progress bars.
 ///
@@ -39,11 +180,21 @@ impl Default for PbProgressReporter {
     }
 }
 
+impl PbProgressReporter {
+    /// Create a new progress reporter from a [`MultiProgress`].
+    pub fn from_mb(mb: MultiProgress) -> Self {
+        PbProgressReporter {
+            mb,
+            ..Default::default()
+        }
+    }
+}
+
 impl ProgressReporter for PbProgressReporter {
-    fn epoch_start(&mut self, n_epochs: f32, batches_per_epochs: usize) {
-        let epoch_bar = self
-            .mb
-            .add(ProgressBar::new((n_epochs * batches_per_epochs as f32) as u64));
+    fn epoch_start(&mut self, _run_name: String, n_epochs: f32, batches_per_epochs: usize) {
+        let epoch_bar = self.mb.add(ProgressBar::new(
+            (n_epochs * batches_per_epochs as f32) as u64,
+        ));
         epoch_bar.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner:.green} MASTER   {bar:20.cyan/blue} [{pos:>7}/{len:7} {elapsed_precise} < {eta_precise}, {per_sec_short:.2}, Epoch {epoch_progress}] {msg}")
@@ -136,30 +287,6 @@ impl ProgressReporter for PbProgressReporter {
         }
         self.estimate_bar = None;
     }
-}
-
-/// A trait for reporting progress during training.
-pub trait ProgressReporter {
-    /// Called before epoch starts.
-    fn epoch_start(&mut self, n_epochs: f32, batches_per_epochs: usize);
-    /// Called when an epoch ends.
-    fn epoch_progress(&mut self, current_epoch: usize);
-    /// Called when all epochs have been processed.
-    fn epoch_end(&mut self);
-
-    /// Called when the training starts.
-    fn train_start(&mut self, n_train_batches: usize);
-    /// Called when some batches have been processed.
-    fn train_progress(&mut self, current_train_batches: usize);
-    /// Called when the training ends.
-    fn train_end(&mut self);
-
-    /// Called when the loss estimation starts.
-    fn estimate_start(&mut self);
-    /// Called when a stage of the loss estimation are completed.
-    fn estimate_progress(&mut self);
-    /// Called when the loss estimation ends.
-    fn estimate_end(&mut self, loss_estimates: LossEstimates);
 }
 
 impl estimate::ProgressReporter for PbProgressReporter {

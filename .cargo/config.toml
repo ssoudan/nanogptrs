@@ -1,6 +1,8 @@
 [env]
-LIBTORCH = { value = "torch" , relative = true }
-DYLD_LIBRARY_PATH = { value = "torch/lib" , relative = true }
+LIBTORCH = { value = "torch", relative = true }
+DYLD_LIBRARY_PATH = { value = "torch/lib", relative = true }
+LD_LIBRARY_PATH = { value = "torch/lib", relative = true }
+LIBTORCH_CXX11_ABI = { value = "1" }
 
 [profile.ci]
 failure-output = "immediate-final"
@@ -21,10 +23,8 @@ rustflags = [
     "-Wclippy::await_holding_lock",
     "-Wclippy::char_lit_as_u8",
     "-Arustdoc::invalid_rust_codeblocks",
-    "-Arustdoc::bare_urls"
+    "-Arustdoc::bare_urls",
 ]
 
 [target.'cfg(feature = "cargo-clippy")']
-rustflags = [
-    "-Wmissing_docs",
-]
+rustflags = ["-Wmissing_docs"]

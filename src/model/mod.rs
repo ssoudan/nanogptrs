@@ -205,7 +205,7 @@ impl nn::ModuleT for MultiHeadSelfAttention {
 
         assert_eq!(attn.size(), &[b, self.n_head, t, self.head_size]);
 
-        let heads = attn.transpose(1, 2).contiguous().view([b, t, c]);
+        let heads = attn.transpose(1, 2).contiguous().view((b, t, c));
 
         heads.apply(&self.projection).dropout(self.dropout, train)
     }
@@ -516,16 +516,17 @@ impl Block {
 }
 
 impl nn::ModuleT for Block {
+    #[allow(clippy::tuple_array_conversions)]
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let (b, t, n_embd) = xs.size3().unwrap();
         // SA heads with residual connection
         let xs = xs + xs.apply_t(&self.ln1, train).apply_t(&self.attn, train);
-        assert_eq!(xs.size(), &[b, t, n_embd]);
+        assert_eq!(xs.size(), [b, t, n_embd]);
         // [b, t, n_embd]
 
         // Feed forward layer with residual connection
         let xs = &xs + &xs.apply_t(&self.ln2, train).apply_t(&self.mlp, train);
-        assert_eq!(xs.size(), &[b, t, n_embd]);
+        assert_eq!(xs.size(), [b, t, n_embd]);
         xs
         // [b, t, n_embd]
     }

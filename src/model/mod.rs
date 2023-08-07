@@ -584,14 +584,14 @@ pub mod utils {
 
     /// Load tensors from a file and transpose them if needed.
     pub fn load_safetensors(
-        mut vs: VarStore,
+        vs: VarStore,
         var_to_transpose: &[&str; 4],
         source: &str,
         prefix: &str,
     ) -> VarStore {
         let mut load_vs = nn::VarStore::new(tch::Device::Cpu);
         // recreate the variables with the same name in vs2
-        prepare_to_load(&mut load_vs, &mut vs, var_to_transpose, prefix);
+        prepare_to_load(&load_vs, &vs, var_to_transpose, prefix);
         let _ = load_vs.load_partial(source);
 
         // print the values of the variables in vs
@@ -600,16 +600,11 @@ pub mod utils {
         }
 
         // copy the values from vs2 to vs
-        copy_from(&mut load_vs, &mut vs, var_to_transpose, prefix);
+        copy_from(&load_vs, &vs, var_to_transpose, prefix);
         vs
     }
 
-    fn copy_from(
-        source: &mut VarStore,
-        dest: &mut VarStore,
-        var_to_transpose: &[&str; 4],
-        prefix: &str,
-    ) {
+    fn copy_from(source: &VarStore, dest: &VarStore, var_to_transpose: &[&str; 4], prefix: &str) {
         for (name, mut variable) in dest.variables() {
             let name_slit = name.split('.');
             let var_name = name_slit.clone().last().unwrap();
@@ -636,8 +631,8 @@ pub mod utils {
     /// populate a varstore with the same variables as vs (transposed if
     /// needed)
     fn prepare_to_load(
-        new_store: &mut VarStore,
-        vs: &mut VarStore,
+        new_store: &VarStore,
+        vs: &VarStore,
         var_to_transpose: &[&str],
         prefix: &str,
     ) {
@@ -735,7 +730,7 @@ mod tests {
         };
 
         let prefix = "h.0";
-        let prefix_ = prefix.clone().split('.');
+        let prefix_ = prefix.split('.');
         let root = prefix_.fold(vs.root(), |vs, name| vs / name);
 
         let block = Block::new(root.clone(), config);

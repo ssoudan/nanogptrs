@@ -20,9 +20,9 @@ tch_download = ["tch/download-libtorch"]
 tch = { version = "0.13.0", default-features = false, features = [] }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-indicatif = { version = "0.17.5", features = ["improved_unicode"] }
+indicatif = { version = "0.17.6", features = ["improved_unicode"] }
 tokenizers = { version = "*" }
-clap = { version = "4.3.11", features = ["derive"] }
+clap = { version = "4.3.19", features = ["derive"] }
 tensorboard-rs = "0.5.9"
 chrono = { version = "0.4.26", default-features = false, features = ["clock"] }
 itertools = "0.11.0"

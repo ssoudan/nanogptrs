@@ -104,7 +104,7 @@ fn main() {
     match args.action {
         Action::NextToken { model, prompt } => {
             // Build the model
-            let (model, tokenizer) = actions::create_model(&mut vs, model);
+            let (model, tokenizer) = actions::create_model(&vs, model);
             println!("[+] Got a model and a tokenizer");
 
             // Restore the model from the checkpoint
@@ -132,7 +132,7 @@ fn main() {
             tch::manual_seed(seed);
 
             // Build the model
-            let (model, tokenizer) = actions::create_model(&mut vs, model);
+            let (model, tokenizer) = actions::create_model(&vs, model);
             println!("[+] Got a model and a tokenizer");
 
             // Restore the model from the checkpoint
@@ -161,7 +161,7 @@ fn main() {
             };
 
             // Build the model
-            let (model, tokenizer) = actions::create_model(&mut vs, model);
+            let (model, tokenizer) = actions::create_model(&vs, model);
             println!("[+] Got a model and a tokenizer");
 
             // Restore the model from the checkpoint

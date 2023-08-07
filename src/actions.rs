@@ -49,7 +49,7 @@ pub fn generate(
 
 /// Train the model
 pub fn train(
-    mut vs: VarStore,
+    vs: VarStore,
     device: tch::Device,
     run_name: String,
     model: Box<dyn LanguageModel>,
@@ -128,9 +128,9 @@ pub fn train(
         learn_config,
         run_name,
         &mut train_dataloader,
-        &mut valid_dataloader,
+        &valid_dataloader,
         &mut rng,
-        &mut vs,
+        &vs,
         &model,
         &mut observer,
     );
@@ -188,10 +188,7 @@ fn data_loaders(
 }
 
 /// Create the model from the model parameters
-pub fn create_model(
-    vs: &mut VarStore,
-    model: Model,
-) -> (Box<dyn LanguageModel>, Box<dyn Tokenizer>) {
+pub fn create_model(vs: &VarStore, model: Model) -> (Box<dyn LanguageModel>, Box<dyn Tokenizer>) {
     match model {
         Model::NanoGpt {
             args:
@@ -308,9 +305,9 @@ pub fn learn<R: Rng>(
     learn_config: LearnConfig,
     run_name: String,
     train_dataloader: &mut Loader,
-    valid_dataloader: &mut Loader,
+    valid_dataloader: &Loader,
     mut rng: &mut R,
-    vs: &mut tch::nn::VarStore,
+    vs: &tch::nn::VarStore,
     model: &Box<dyn LanguageModel>,
     observer: &mut Observer,
 ) {
@@ -442,7 +439,7 @@ mod tests {
             },
         };
         // Build the model
-        let (model, tokenizer) = create_model(&mut vs, model);
+        let (model, tokenizer) = create_model(&vs, model);
         println!("[+] Got a model and a tokenizer");
 
         let input = tokenizer.encode(prompt);
@@ -489,7 +486,7 @@ mod tests {
             },
         };
         // Build the model
-        let (model, tokenizer) = create_model(&mut vs, model);
+        let (model, tokenizer) = create_model(&vs, model);
         println!("[+] Got a model and a tokenizer");
 
         let input = tokenizer.encode(prompt);

@@ -388,7 +388,7 @@ impl Tokenizer for Gpt2Tokenizer {
 
     fn decode(&self, v: &[i64]) -> String {
         let v: Vec<u32> = v.iter().map(|&x| x as u32).collect();
-        self.tokenizer.decode(v, false).unwrap()
+        self.tokenizer.decode(&v, false).unwrap()
     }
 }
 

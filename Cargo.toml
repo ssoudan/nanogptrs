@@ -24,7 +24,7 @@ indicatif = { version = "0.17.6", features = ["improved_unicode"] }
 tokenizers = { version = "*" }
 clap = { version = "4.4.0", features = ["derive"] }
 tensorboard-rs = "0.5.9"
-chrono = { version = "0.4.26", default-features = false, features = ["clock"] }
+chrono = { version = "0.4.28", default-features = false, features = ["clock"] }
 itertools = "0.11.0"
 rayon = "1.7.0"
 

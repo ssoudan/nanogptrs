@@ -20,7 +20,7 @@ tch_download = ["tch/download-libtorch"]
 tch = { version = "0.13.0", default-features = false, features = [] }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
-indicatif = { version = "0.17.6", features = ["improved_unicode"] }
+indicatif = { version = "0.17.7", features = ["improved_unicode"] }
 tokenizers = { version = "*" }
 clap = { version = "4.4.4", features = ["derive"] }
 tensorboard-rs = "0.5.9"

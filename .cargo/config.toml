@@ -1,8 +1,6 @@
 [env]
-LIBTORCH = { value = "torch", relative = true }
-DYLD_LIBRARY_PATH = { value = "torch/lib", relative = true }
-LD_LIBRARY_PATH = { value = "torch/lib", relative = true }
-LIBTORCH_CXX11_ABI = { value = "1" }
+LIBTORCH_USE_PYTORCH = {"value"="1"} 
+LIBTORCH_BYPASS_VERSION_CHECK = {"value"="1"} 
 
 [profile.ci]
 failure-output = "immediate-final"
@@ -28,3 +26,6 @@ rustflags = [
 
 [target.'cfg(feature = "cargo-clippy")']
 rustflags = ["-Wmissing_docs"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,--allow-shlib-undefined", "-C", "link-arg=-fno-lto"]

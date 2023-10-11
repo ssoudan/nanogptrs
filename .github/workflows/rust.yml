@@ -13,42 +13,41 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-
     steps:
     - name: Install lld
       run: sudo apt-get update && sudo apt-get install -y lld wget unzip
-    - name: Download libtorch
-      env:
-        PYTORCH_VERSION: 2.0.0
-      run: wget https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${PYTORCH_VERSION}%2Bcpu.zip -O /tmp/libtorch.zip
-    - name: Install libtorch
-      run: sudo unzip /tmp/libtorch.zip -d / && sudo cp /libtorch/lib/* /usr/lib/
     - uses: actions/checkout@v2
+    - uses: mamba-org/setup-micromamba@v1
+      with:
+        generate-run-shell: true
+        environment-file: environment.yml    
     - name: Download models
       run: ./models/download.sh
     - name: Download data
       run: ./data/download.sh
-    - name: Setup symlink
-      run: ln -s /libtorch $GITHUB_WORKSPACE/torch
     - name: Install latest nightly
       uses: actions-rs/toolchain@v1
       with:
         toolchain: nightly
         override: true
         components: rustfmt, clippy
-    - name: Debug
-      run: ldd /usr/lib/libtorch_cpu.so
     - name: Check
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
+      run: |
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        cargo check
+      shell: micromamba-shell {0}
     - name: Clippy
-      run: cargo clippy -- -D warnings
+      run: |
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        cargo clippy -- -D warnings
+      shell: micromamba-shell {0}
     - name: Build
-      uses: actions-rs/cargo@v1
-      with:
-        command: build
+      run: |
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        cargo build
+      shell: micromamba-shell {0}
     - name: Test
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
+      run: |
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        cargo test
+      shell: micromamba-shell {0}

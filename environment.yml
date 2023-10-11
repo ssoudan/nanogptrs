@@ -2,15 +2,17 @@ name: nanogptrs
 channels:
   - conda-forge
   - defaults
+  - pytorch
 dependencies:
   - python=3.10
   - numpy
   - pandas
   - matplotlib
-  - seaborn
+  - seaborn  
+  - safetensors
+  - tokenizers
+  - tensorboard
+  - mkl
+  - pytorch==2.0.1
   - pip
-  - pip:
-    - safetensors
-    - torch
-    - tokenizers
-    - tensorboard
+ 

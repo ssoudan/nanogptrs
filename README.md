@@ -8,20 +8,20 @@ https://github.com/karpathy/nanoGPT/blob/master/model.py.
 
 # Setup
 
-Create conda environment:
+Create micromamba environment (or conda):
 
 ```bash
-conda env create -f environment.yml
+micromamba env create -f environment.yml
 ```
 
-Activate conda environment:
+Activate environment:
 
 ```bash
-rm -f torch # remove symlink if it exists
-conda activate nanogptrs
-TORCH_DIR=$(python3 -c 'import torch; from pathlib import Path; print(Path(torch.__file__).parent)')
-ln -sf $TORCH_DIR torch
-ls -l torch
+micromamba activate nanogptrs
+```
+
+```bash
+export LD_LIBRARY_PATH=/opt/conda/lib/python3.10/site-packages/torch/lib/:$LD_LIBRARY_PATH
 ```
 
 # Run - generate from pretrained GPT-2

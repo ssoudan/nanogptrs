@@ -10,7 +10,7 @@ use tch::{Device, Tensor};
 
 /// Load data/input.txt and return a string
 pub fn load_file(path: &str) -> String {
-    std::fs::read_to_string(path).expect("Unable to read file")
+    std::fs::read_to_string(path).expect(format!("Unable to read file {}", path).as_str())
 }
 
 /// Vocabulary

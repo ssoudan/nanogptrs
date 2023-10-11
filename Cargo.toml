@@ -17,7 +17,7 @@ default = []
 tch_download = ["tch/download-libtorch"]
 
 [dependencies]
-tch = { version = "0.13.0", default-features = false, features = [] }
+tch = { version = "0.14.0", default-features = false, features = [] }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 indicatif = { version = "0.17.7", features = ["improved_unicode"] }

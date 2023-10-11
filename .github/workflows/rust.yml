@@ -13,7 +13,6 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
-
     steps:
     - name: Install lld
       run: sudo apt-get update && sudo apt-get install -y lld wget unzip
@@ -33,14 +32,22 @@ jobs:
         override: true
         components: rustfmt, clippy
     - name: Check
-      run: cargo check
+      run: |
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        cargo check
       shell: micromamba-shell {0}
     - name: Clippy
-      run: cargo clippy -- -D warnings
+      run: |
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        cargo clippy -- -D warnings
       shell: micromamba-shell {0}
     - name: Build
-      run: cargo build
+      run: |
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        cargo build
       shell: micromamba-shell {0}
     - name: Test
-      run: cargo test
+      run: |
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        cargo test
       shell: micromamba-shell {0}

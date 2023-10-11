@@ -13,6 +13,6 @@ dependencies:
   - tokenizers
   - tensorboard
   - mkl
-  - pytorch==2.0.1
+  - pytorch==2.1.0
   - pip
  

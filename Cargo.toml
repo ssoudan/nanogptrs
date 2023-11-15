@@ -25,7 +25,7 @@ tokenizers = { version = "*" }
 clap = { version = "4.4.8", features = ["derive"] }
 tensorboard-rs = "0.5.9"
 chrono = { version = "0.4.31", default-features = false, features = ["clock"] }
-itertools = "0.11.0"
+itertools = "0.12.0"
 rayon = "1.8.0"
 
 [dev-dependencies]

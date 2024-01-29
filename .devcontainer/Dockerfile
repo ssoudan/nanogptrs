@@ -1,4 +1,4 @@
-FROM ghcr.io/mamba-org/micromamba:bullseye
+FROM ghcr.io/mamba-org/micromamba:jammy-cuda-12.3.1
 
 ####################################
 USER root

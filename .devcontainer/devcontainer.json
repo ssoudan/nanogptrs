@@ -42,11 +42,8 @@
 		}
 	},
 	"features": {
-		"ghcr.io/devcontainers/features/nvidia-cuda:1": {
-			"installCudnn": true
-		},
 		"ghcr.io/devcontainers/features/common-utils:2": {
-			"configureZshAsDefaultShell": true,
+			"configureZleshAsDefaultShell": true,
 			"installOhMyZshConfig": false
 		},
 		"ghcr.io/devcontainers/features/github-cli:1": {}

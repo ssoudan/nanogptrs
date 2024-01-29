@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Install lld
-      run: sudo apt-get update && sudo apt-get install -y lld wget unzip
+      run: sudo apt-get update && sudo apt-get install -y lld wget unzip libopenblas-dev
     - uses: actions/checkout@v2
     - uses: mamba-org/setup-micromamba@v1
       with:

@@ -48,7 +48,7 @@ jobs:
       shell: micromamba-shell {0}
     - name: Test debug
       run: |
-        ls /home/runner/micromamba/lib/
+        # ls /home/runner/micromamba/lib/
         find / -name "libcblas*" -type f 2>/dev/null
     - name: Test
       run: |

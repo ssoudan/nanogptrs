@@ -46,6 +46,10 @@ jobs:
         export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
         cargo build
       shell: micromamba-shell {0}
+    - name: Test debug
+      run: |
+        ls /home/runner/micromamba/lib/
+        find / -name "libcblas*" -type f 2>/dev/null
     - name: Test
       run: |
         export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/home/runner/micromamba/lib/:$LD_LIBRARY_PATH

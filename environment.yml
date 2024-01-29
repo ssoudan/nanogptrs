@@ -15,4 +15,5 @@ dependencies:
   - mkl
   - pytorch==2.1.0
   - pip
+  - libcblas
  

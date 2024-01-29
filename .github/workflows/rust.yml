@@ -48,6 +48,6 @@ jobs:
       shell: micromamba-shell {0}
     - name: Test
       run: |
-        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/opt/conda/lib/:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/home/runner/micromamba/lib/:$LD_LIBRARY_PATH
         cargo test
       shell: micromamba-shell {0}

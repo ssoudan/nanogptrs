@@ -33,22 +33,22 @@ jobs:
         components: rustfmt, clippy
     - name: Check
       run: |
-        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/home/runner/micromamba/envs/nanogptrs/lib/:$LD_LIBRARY_PATH
         cargo check
       shell: micromamba-shell {0}
     - name: Clippy
       run: |
-        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/home/runner/micromamba/envs/nanogptrs/lib/:$LD_LIBRARY_PATH
         cargo clippy -- -D warnings
       shell: micromamba-shell {0}
     - name: Build
       run: |
-        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/home/runner/micromamba/envs/nanogptrs/lib/:$LD_LIBRARY_PATH
         cargo build
       shell: micromamba-shell {0}
-    - name: Test debug
-      run: |
-        ls /home/runner/micromamba/envs/nanogptrs        
+    # - name: Test debug
+    #   run: |
+    #     ls /home/runner/micromamba/envs/nanogptrs        
     - name: Test
       run: |
         export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/home/runner/micromamba/envs/nanogptrs/lib/:$LD_LIBRARY_PATH

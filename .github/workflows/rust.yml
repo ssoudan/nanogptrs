@@ -48,11 +48,9 @@ jobs:
       shell: micromamba-shell {0}
     - name: Test debug
       run: |
-        ls /home/runner/micromamba/
-        find / -name "libcblas*" -type f 2>/dev/null
-        find / -name "libopenblas*" -type f 2>/dev/null
+        ls /home/runner/micromamba/envs/nanogptrs        
     - name: Test
       run: |
-        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/home/runner/micromamba/lib/:$LD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=`python -c "from torch.utils import cpp_extension; print(':'.join(cpp_extension.library_paths()))"`:/home/runner/micromamba/envs/nanogptrs/lib/:$LD_LIBRARY_PATH
         cargo test
       shell: micromamba-shell {0}

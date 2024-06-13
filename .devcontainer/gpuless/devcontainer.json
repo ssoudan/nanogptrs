@@ -1,0 +1,51 @@
+{
+	"name": "rust-gpuless-nanogptrs",
+	"build": {
+		"context": "../..",
+		"dockerfile": "../Dockerfile"
+	},
+	"runArgs": [
+		"--ulimit=nofile=262144:262144"
+	],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"GitHub.copilot",
+				"github.copilot-chat",
+				"github.vscode-github-actions",
+				"github.vscode-github-actions",
+				"vadimcn.vscode-lldb",
+				"rust-lang.rust-analyzer",
+				"tamasfe.even-better-toml",
+				"serayuzgur.crates",
+				"panicbit.cargo",
+				"ms-python.python",
+				"ms-toolsai.jupyter",
+				"ms-python.vscode-pylance",
+				"ms-python.black-formatter",
+				"ms-python.pylint",
+				"ms-python.autopep8",
+				"gruntfuggly.todo-tree"
+			],
+			"settings": {
+				"files.associations": {
+					"*.rs": "rust"
+				},
+				"editor.quickSuggestions": {
+					"other": "on",
+					"comments": "on",
+					"strings": true
+				}
+			}
+		}
+	},
+	"features": {
+		"ghcr.io/devcontainers/features/common-utils:2": {
+			"configureZleshAsDefaultShell": true,
+			"installOhMyZshConfig": false
+		},
+		"ghcr.io/devcontainers/features/github-cli:1": {}
+	},
+	"postCreateCommand": "sudo micromamba install -y -n base -f environment.yml -r /opt/conda ; sudo micromamba clean --all --yes ",
+	"remoteUser": "vscode"
+}

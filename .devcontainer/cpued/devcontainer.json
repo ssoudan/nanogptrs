@@ -1,8 +1,8 @@
 {
 	"name": "rust-gpued-nanogptrs",
 	"build": {
-		"context": "..",
-		"dockerfile": "./Dockerfile"
+		"context": "../..",
+		"dockerfile": "../Dockerfile"
 	},
 	"runArgs": [
 		"--ulimit=nofile=262144:262144",

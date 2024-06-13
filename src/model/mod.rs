@@ -541,7 +541,7 @@ pub trait LanguageModel: nn::ModuleT {
     ///
     /// # Arguments
     /// - xs: the starting sequence of tokens of shape \[batch_size, x\]; x <=
-    /// `block_size`
+    ///   `block_size`
     /// - max_len: the maximum length of the generated sequence
     ///
     /// # Returns
@@ -555,7 +555,7 @@ pub trait LanguageModel: nn::ModuleT {
     ///
     /// # Arguments
     /// - xs: the sequence of input tokens of shape \[batch_size, x\]; x <=
-    /// `block_size`
+    ///   `block_size`
     ///
     /// # Returns
     /// the probability of the next token of shape \[batch_size, vocab_size\]

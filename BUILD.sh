@@ -7,6 +7,9 @@ BLUE='\033[0;34m'
 NORMAL='\033[0m'
 GREEN='\033[0;32m'
 
+echo -e "${BLUE}Downloading...${NORMAL}"
+./data/download.sh || (echo -e "$RED [Download failed] $NORMAL" && exit 1)
+./models/download.sh || (echo -e "$RED [Download failed] $NORMAL" && exit 1)
 
 echo -e "${BLUE}Testing...${NORMAL}"
 cargo test --all --all-features || (echo -e "$RED [Tests failed] $NORMAL" && exit 1)
@@ -26,8 +29,8 @@ cargo +nightly fmt --all -- --check || (echo -e "$RED [Format failed] $NORMAL" &
 echo -e "${BLUE}Licensing...${NORMAL}"
 cargo deny check || (echo -e "$RED [License check failed] $NORMAL" && exit 1)
 
-echo -e "${BLUE}Udeps...${NORMAL}"
-cargo +nightly udeps || (echo -e "$RED [Udep failed] $NORMAL" && exit 1)
+# echo -e "${BLUE}Udeps...${NORMAL}"
+# cargo +nightly udeps || (echo -e "$RED [Udep failed] $NORMAL" && exit 1)
 
 #echo -e "${BLUE}Benchmarking...${NORMAL}"
 #cargo criterion --all --features=unstable

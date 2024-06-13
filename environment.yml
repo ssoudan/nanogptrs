@@ -12,8 +12,8 @@ dependencies:
   - safetensors
   - tokenizers
   - tensorboard
-  - mkl
-  - pytorch==2.1.0
+  # - mkl
+  - pytorch==2.3.0
   - pip
   - libcblas
  
